@@ -9,14 +9,14 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 
 - Phạm vi, quyết định đã chốt và các giới hạn: [PROJECT_SCOPE.md](PROJECT_SCOPE.md)
 - Cách tải dữ liệu: [data/README.md](data/README.md)
-- Chất lượng dữ liệu Home Credit: [docs/data_quality_home_credit.md](docs/data_quality_home_credit.md)
+- Chất lượng dữ liệu: [Home Credit](docs/data_quality_home_credit.md), [Freddie Mac](docs/data_quality_freddie_mac.md)
 - Định nghĩa nghiệp vụ (single source of truth): [configs/definitions.yaml](configs/definitions.yaml)
 
 ## Trạng thái
 
 | Chặng | Nội dung | Trạng thái |
 |---|---|---|
-| 1 | Nền móng: repo, môi trường, data contract, định nghĩa, ingest, data validation, test lõi | Home Credit: dữ liệu thật đã qua validate (135 check, 0 error). Còn Freddie Mac |
+| 1 | Nền móng: repo, môi trường, data contract, định nghĩa, ingest, data validation, test lõi | Dữ liệu thật đã qua validate: Home Credit (135 check, 0 error), Freddie Mac 2012-2025 (0 error) |
 | 2 | WoE / IV, binning, rà soát leakage | |
 | 3 | Scorecard | |
 | 4 | LightGBM challenger | |

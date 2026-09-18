@@ -41,8 +41,11 @@ Bản sample là mẫu ngẫu nhiên **50.000 khoản vay cho mỗi năm giải 
 
 1. Đăng ký miễn phí và đăng nhập **Clarity Data Intelligence** qua trang dataset:
    <https://www.freddiemac.com/research/datasets/sf-loanlevel-dataset>
-2. Vào mục Data Download (<https://claritydownload.fmapps.freddiemac.com/CRT/>), tải `sample_YYYY.zip` cho các năm **2012-2019** (danh sách năm nằm trong `configs/ews.yaml`).
-3. Giải nén để có `sample_orig_YYYY.txt` và `sample_perf_YYYY.txt`, đặt thẳng vào `data/raw/freddie_mac/` (không để thư mục con).
+2. Vào trang Data Download (<https://claritydownload.fmapps.freddiemac.com/CRT/>) và chọn tab **SFLLD Data** ở góc trên bên phải.
+   Tab mặc định **CRT Data** là dữ liệu chứng khoán hoá (STACR / ACIS), không phải bộ dữ liệu này.
+3. Tải `sample_YYYY.zip` cho các năm **2012-2025** (danh sách năm nằm trong `configs/ews.yaml`).
+   Không tải `historical_data_*`: đó là bộ đầy đủ, mỗi năm vài GB.
+4. Giải nén để có `sample_orig_YYYY.txt` và `sample_perf_YYYY.txt`, đặt thẳng vào `data/raw/freddie_mac/` (không để thư mục con).
 
 Lưu ý về file layout:
 
@@ -50,7 +53,7 @@ Lưu ý về file layout:
 - Nếu Freddie Mac đổi layout, `ingest` sẽ dừng với thông báo số cột không khớp. Khi đó tải File Layout mới trên trang dataset và cập nhật contract.
 - Mã quá hạn là `00`, `01`, `02`, `03`... (cap ở `99`), `RA` = REO acquisition, `XX` = không có dữ liệu.
 
-Nên thử trước với 1-2 năm để kiểm tra pipeline, rồi mới tải đủ 8 năm.
+Nên thử trước với 1-2 năm để kiểm tra pipeline, rồi mới tải đủ 14 năm (khoảng 3.9 GB text, 318 MB sau khi ingest).
 
 ## 3. Sau khi tải
 

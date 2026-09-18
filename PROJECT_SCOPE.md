@@ -28,7 +28,7 @@ Cùng với đó: pipeline chạy bằng một lệnh, test tự động cho ph�
 | # | Vấn đề | Quyết định | Hệ quả phải ghi nhận |
 |---|---|---|---|
 | 1 | Home Credit không có ngày nộp đơn, `application_test` không có nhãn | Stratified random split train / validation / calibration / test (60/10/15/15). `application_test` là mẫu hiện tại để tính PSI. | **Không có out-of-time thật.** Ghi rõ trong model card và validation report. `application_test` có population khác train (Revolving loans 0.9% so với 9.5%), nên PSI phải tách theo `NAME_CONTRACT_TYPE`; xem [docs/data_quality_home_credit.md](docs/data_quality_home_credit.md). |
-| 2 | Chọn Fannie Mae hay Freddie Mac | Freddie Mac **sample dataset**, vintage 2012-2019 | 50k khoản vay / năm là mẫu ngẫu nhiên, không phải toàn bộ danh mục. |
+| 2 | Chọn Fannie Mae hay Freddie Mac | Freddie Mac **sample dataset**, vintage 2012-2025 (cập nhật 2026-09-19, trước đó là 2012-2019) | 50k khoản vay / năm là mẫu ngẫu nhiên, không phải toàn bộ danh mục. Dữ liệu tháng tới 2026-03. Lứa 2020-2025 chỉ nằm trong stress / out-of-time / monitoring (không vào train), để danh mục lúc test có cả khoản mới như danh mục thật. |
 | 3 | Forbearance COVID 2020-2021 làm tỷ lệ quá hạn tăng vọt | 2020-03 → 2021-12 là **stress segment**: không train, đánh giá riêng | Out-of-time sau COVID bắt đầu từ 2022-01. |
 | 4 | Laptop khoảng 7.4 GB RAM | DuckDB + parquet, giới hạn RAM của DuckDB qua `.env` | Bảng panel lớn phải xử lý trong DuckDB, không load hết vào pandas. |
 | 5 | Cure rồi lại 90+ | Vẫn tính là event (`redefault_after_cure_counts_as_event: true`) | Watchlist bắt được cả khoản tái vỡ nợ. Có cờ `ever_90plus_before_t` để phân tích riêng. |

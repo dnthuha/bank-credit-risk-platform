@@ -9,7 +9,7 @@ from credit_risk.data.contracts import parse_contract
 from credit_risk.data.db import connect
 from credit_risk.data.ingest import RawDataError, ingest_source, processed_path
 from credit_risk.data.validate import validate_source
-from conftest import write_freddie_raw, write_home_credit_raw
+from conftest import freddie_columns, write_freddie_raw, write_home_credit_raw
 
 
 @pytest.fixture(scope="module")
@@ -157,6 +157,41 @@ def test_known_source_issue_warns_without_blocking(settings, contracts):
     report = validate_source(contract, settings, con)
     assert report.passed
     assert [(r.table, r.column, r.n_failed) for r in report.warnings] == [("bureau", "DAYS_CREDIT_UPDATE", 2)]
+
+
+def _edit_freddie_field(path, table, field, old, new):
+    idx = freddie_columns(table).index(field)
+    lines = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        fields = line.split("|")
+        if fields[idx] == old:
+            fields[idx] = new
+        lines.append("|".join(fields))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_freddie_unknown_code_stops_the_pipeline(settings, contracts):
+    raw = write_freddie_raw(settings)
+    # A zero balance code Freddie has never published: EWS labels depend on it -> error.
+    _edit_freddie_field(raw / "sample_perf_2015.txt", "performance", "zero_balance_code", "01", "07")
+    # pre-HARP loan ids start with F (fixed rate) or A (ARM) -> error.
+    _edit_freddie_field(raw / "sample_orig_2015.txt", "origination", "pre_harp_loan_id", "", "X08Q10000001")
+    # vantagescore4 has never been populated, so its rule is still unverified -> warn.
+    _edit_freddie_field(raw / "sample_orig_2015.txt", "origination", "vantagescore4", "9999", "900")
+
+    contract = contracts["freddie_mac"]
+    con = connect(settings)
+    ingest_source(contract, settings, con, "test")
+    report = validate_source(contract, settings, con)
+
+    assert not report.passed
+    assert {(r.table, r.check, r.column) for r in report.errors} == {
+        ("performance", "allowed_values", "zero_balance_code"),
+        ("origination", "pattern", "pre_harp_loan_id"),
+    }
+    assert {(r.table, r.check, r.column) for r in report.warnings} == {
+        ("origination", "range", "vantagescore4"),
+    }
 
 
 def test_sentinel_values_are_not_range_violations(settings, contracts):

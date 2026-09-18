@@ -8,6 +8,18 @@
 # (9999, 999, 99, 9, XX...), được đổi thành NULL ngay khi ingest.
 # dtype yyyymm -> DATE (ngày 01 của tháng).
 # Các quy ước còn lại (nullable, allowed_values, min/max, severity): xem home_credit.yaml.
+#
+# Severity:
+#   Validate trên dữ liệu thật, lứa 2012-2025 (2026-09-19, run 20260918T181823Z-adf64872):
+#   103/103 check đạt, nên mọi rule warn đã kiểm được trên dữ liệu đều nâng lên error.
+#   Freddie phát hành lại dữ liệu mỗi quý: nếu xuất hiện mã mới (ví dụ zero_balance_code
+#   mới) thì pipeline PHẢI dừng, vì nhãn EWS được suy ra từ các mã này.
+#   Rule còn để warn: cột chưa từng có dữ liệu, nên rule chưa được kiểm thật.
+#   Profile chi tiết và các phát hiện: docs/data_quality_freddie_mac.md
+#
+# loan_id = PYYQnXXXXXXX: P = sản phẩm (F = lãi suất cố định, A = ARM), YY = năm giải ngân,
+# Qn = quý giải ngân. Lứa (vintage) lấy từ loan_id, KHÔNG lấy từ first_payment_date
+# (khoảng 16% khoản trả kỳ đầu vào năm sau năm giải ngân).
 
 source: freddie_mac
 raw_subdir: freddie_mac
@@ -15,61 +27,77 @@ format: pipe_no_header
 layout_version: "2026-07"
 
 tables:
+  # Cột có dữ liệu tuỳ lứa (feature availability):
+  #   orig_dti NULL gần như trùng với các khoản HARP (48,005 thiếu DTI, trong đó 47,975 là HARP;
+  #   HARP không yêu cầu DTI). Tỷ trọng HARP: 34.8% lứa 2012 -> 0% từ lứa 2020.
+  #   property_valuation_method: chỉ có từ lứa 2017 (đủ từ 2020).
+  #   vantagescore4: trống ở MỌI lứa 2012-2025.
+  #   prepayment_penalty = N, amortization_type = FRM, interest_only_indicator = N ở mọi khoản: hằng số.
   origination:
     file_glob: "sample_orig_*.txt"
     description: "Thuộc tính lúc giải ngân. Một dòng = một khoản vay."
     primary_key: [loan_id]
     min_rows: 1
     columns:
-      - {name: fico, dtype: integer, na_values: ["9999"], min: 300, max: 850, severity: warn, description: "Classic FICO"}
+      - {name: fico, dtype: integer, na_values: ["9999"], min: 300, max: 850, description: "Classic FICO"}
       - {name: first_payment_date, dtype: yyyymm, nullable: false}
-      - {name: first_time_homebuyer, dtype: string, na_values: ["9"], allowed_values: [Y, N], severity: warn}
+      - {name: first_time_homebuyer, dtype: string, na_values: ["9"], allowed_values: [Y, N]}
       - {name: maturity_date, dtype: yyyymm}
       - {name: msa, dtype: string, description: "MSA / Metropolitan Division; NULL = không thuộc MSA hoặc không rõ"}
-      - {name: mi_pct, dtype: integer, na_values: ["999"], min: 0, max: 55, severity: warn}
-      - {name: num_units, dtype: integer, na_values: ["99"], min: 1, max: 4, severity: warn}
-      - {name: occupancy_status, dtype: string, na_values: ["9"], allowed_values: [P, I, S], severity: warn}
-      - {name: orig_cltv, dtype: integer, na_values: ["999"], min: 1, max: 998, severity: warn}
-      - {name: orig_dti, dtype: integer, na_values: ["999"], min: 0, max: 65, severity: warn}
-      - {name: orig_upb, dtype: number, nullable: false, min: 0, severity: warn}
-      - {name: orig_ltv, dtype: integer, na_values: ["999"], min: 1, max: 998, severity: warn}
-      - {name: orig_interest_rate, dtype: number, min: 0, severity: warn}
-      - {name: channel, dtype: string, na_values: ["9"], allowed_values: [R, B, C, T], severity: warn}
-      - {name: prepayment_penalty, dtype: string, allowed_values: [Y, N], severity: warn}
-      - {name: amortization_type, dtype: string, allowed_values: [FRM, ARM], severity: warn}
+      - {name: mi_pct, dtype: integer, na_values: ["999"], min: 0, max: 55}
+      - {name: num_units, dtype: integer, na_values: ["99"], min: 1, max: 4}
+      - {name: occupancy_status, dtype: string, na_values: ["9"], allowed_values: [P, I, S]}
+      - {name: orig_cltv, dtype: integer, na_values: ["999"], min: 1, max: 998}
+      - {name: orig_dti, dtype: integer, na_values: ["999"], min: 0, max: 65}
+      - {name: orig_upb, dtype: number, nullable: false, min: 0}
+      - {name: orig_ltv, dtype: integer, na_values: ["999"], min: 1, max: 998}   # HARP: tới 684
+      - {name: orig_interest_rate, dtype: number, min: 0}
+      - {name: channel, dtype: string, na_values: ["9"], allowed_values: [R, B, C, T]}
+      - {name: prepayment_penalty, dtype: string, allowed_values: [Y, N]}
+      - {name: amortization_type, dtype: string, allowed_values: [FRM, ARM]}
       - {name: property_state, dtype: string}
-      - {name: property_type, dtype: string, na_values: ["99"], allowed_values: [CP, CO, PU, SF, MH], severity: warn}
+      - {name: property_type, dtype: string, na_values: ["99"], allowed_values: [CP, CO, PU, SF, MH]}
       - {name: postal_code, dtype: string, na_values: ["000"], description: "3 chữ số đầu"}
-      - {name: loan_id, dtype: string, role: key, nullable: false, description: "PYYQnXXXXXXX"}
-      - {name: loan_purpose, dtype: string, na_values: ["9"], allowed_values: [P, C, N, R], severity: warn}
+      - {name: loan_id, dtype: string, role: key, nullable: false, pattern: "^F[0-9]{2}Q[1-4][0-9]{7}$", description: "PYYQnXXXXXXX"}
+      - {name: loan_purpose, dtype: string, na_values: ["9"], allowed_values: [P, C, N, R]}
       - {name: orig_loan_term, dtype: integer}
-      - {name: num_borrowers, dtype: integer, na_values: ["99"], min: 1, max: 10, severity: warn}
+      - {name: num_borrowers, dtype: integer, na_values: ["99"], min: 1, max: 10}
       - {name: seller_name, dtype: string}
-      - {name: super_conforming_flag, dtype: string}
-      - {name: pre_harp_loan_id, dtype: string}
-      - {name: special_eligibility_program, dtype: string}
-      - {name: harp_indicator, dtype: string}
-      - {name: property_valuation_method, dtype: string, na_values: ["7"], allowed_values: ["1", "2", "3", "4"], severity: warn}
-      - {name: interest_only_indicator, dtype: string}
+      - {name: super_conforming_flag, dtype: string, allowed_values: [Y, N]}
+      - {name: pre_harp_loan_id, dtype: string, pattern: "^[FA][0-9]{2}Q[1-4][0-9]{7}$", description: "Khoản vay cũ trước HARP; A = ARM"}
+      - {name: special_eligibility_program, dtype: string, allowed_values: [H, F, R], description: "H Home Possible, F HFA Advantage, R Refi Possible"}
+      - {name: harp_indicator, dtype: string, allowed_values: [Y, N]}
+      - {name: property_valuation_method, dtype: string, na_values: ["7"], allowed_values: ["1", "2", "3", "4"]}
+      - {name: interest_only_indicator, dtype: string, allowed_values: [Y, N]}
+      # Chưa có dữ liệu ở lứa nào nên rule chưa được kiểm: giữ warn.
       - {name: vantagescore4, dtype: integer, na_values: ["9999"], min: 300, max: 850, severity: warn}
 
+  # Sự thật đã kiểm trên dữ liệu thật (chưa có loại check tương ứng trong validator):
+  #   - mỗi khoản có tối đa một dòng zero balance, không có dòng nào sau tháng zero balance;
+  #   - tháng liên tục, trừ 3 khoản hụt tháng (F17Q40045268, F15Q30201969, F15Q40044673):
+  #     cohort EWS loại theo incomplete_performance_window;
+  #   - 5 khoản giải ngân Q4/2025 chưa có dòng performance nào (kỳ đầu từ 2025-12);
+  #   - 13,627 dòng mã XX (không rõ trạng thái), chỉ ở 2025-2026: cohort loại theo status_not_available_at_t;
+  #   - 8.7% khoản xuất hiện lần đầu khi loan_age > 0: vintage curve dùng loan_age, không đếm dòng;
+  #   - 9 dòng remaining_months_to_maturity = -1; 2 dòng current_upb = 0 khi chưa zero balance.
+  # Cột có dữ liệu từ một thời điểm: eltv từ 2017-04, mi_cancellation_indicator từ 2015-01.
   performance:
     file_glob: "sample_perf_*.txt"
     description: "Hiệu quả trả nợ hằng tháng. Một dòng = một cặp khoản vay - tháng báo cáo."
     primary_key: [loan_id, period]
     min_rows: 1
     foreign_keys:
-      - {column: loan_id, references: [origination.loan_id], severity: warn}
+      - {column: loan_id, references: [origination.loan_id]}
     columns:
       - {name: loan_id, dtype: string, role: key, nullable: false}
       - {name: period, dtype: yyyymm, role: reporting_month, nullable: false}
-      - {name: current_upb, dtype: number, min: 0, severity: warn}
-      - {name: delinquency_status, dtype: string, na_values: ["XX"], pattern: "^([0-9]{2}|RA)$", severity: warn, description: "00 current, 01 30-59, 02 60-89, 03+ 90+, RA REO acquisition"}
-      - {name: loan_age, dtype: integer}
+      - {name: current_upb, dtype: number, min: 0}
+      - {name: delinquency_status, dtype: string, na_values: ["XX"], pattern: "^([0-9]{2}|RA)$", description: "00 current, 01 30-59, 02 60-89, 03+ 90+, RA REO acquisition"}
+      - {name: loan_age, dtype: integer, min: 0}
       - {name: remaining_months_to_maturity, dtype: integer}
       - {name: defect_settlement_date, dtype: yyyymm}
-      - {name: modification_flag, dtype: string, allowed_values: [Y, P], severity: warn}
-      - {name: zero_balance_code, dtype: string, allowed_values: ["01", "02", "03", "09", "15", "16", "96"], severity: warn}
+      - {name: modification_flag, dtype: string, allowed_values: [Y, P]}
+      - {name: zero_balance_code, dtype: string, allowed_values: ["01", "02", "03", "09", "15", "16", "96"]}
       - {name: zero_balance_effective_date, dtype: yyyymm}
       - {name: current_interest_rate, dtype: number}
       - {name: current_non_interest_bearing_upb, dtype: number}
@@ -84,15 +112,15 @@ tables:
       - {name: miscellaneous_expenses, dtype: number}
       - {name: actual_loss, dtype: number}
       - {name: cumulative_modification_costs, dtype: number}
-      - {name: interest_rate_step_indicator, dtype: string}
-      - {name: payment_deferral_flag, dtype: string, allowed_values: [C, P], severity: warn}
-      - {name: eltv, dtype: integer, na_values: ["999"], min: 1, max: 998, severity: warn}
+      - {name: interest_rate_step_indicator, dtype: string, allowed_values: [Y, N]}
+      - {name: payment_deferral_flag, dtype: string, allowed_values: [C, P]}
+      - {name: eltv, dtype: integer, na_values: ["999"], min: 1, max: 998}
       - {name: zero_balance_removal_upb, dtype: number}
       - {name: delinquent_accrued_interest, dtype: number}
-      - {name: delinquency_due_to_disaster, dtype: string, allowed_values: [Y], severity: warn}
-      - {name: borrower_assistance_plan, dtype: string, allowed_values: [F, R, T], severity: warn}
+      - {name: delinquency_due_to_disaster, dtype: string, allowed_values: [Y]}
+      - {name: borrower_assistance_plan, dtype: string, allowed_values: [F, R, T]}
       - {name: current_period_modification_costs, dtype: number}
       - {name: current_interest_bearing_upb, dtype: number}
-      - {name: mi_cancellation_indicator, dtype: string, na_values: ["7"], allowed_values: [Y, N], severity: warn}
+      - {name: mi_cancellation_indicator, dtype: string, na_values: ["7"], allowed_values: [Y, N]}
       - {name: servicer_name, dtype: string}
       - {name: bankruptcy_cramdown_costs, dtype: number}

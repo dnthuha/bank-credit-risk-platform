@@ -4,7 +4,11 @@
 seed: 7
 
 data:
-  vintage_years: [2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019]
+  # Lứa 2012-2019: nguồn của mẫu train / validation (theo tháng quan sát, xem time_split).
+  # Lứa 2020-2025: chỉ xuất hiện từ 2020, tức trong stress / out-of-time / monitoring,
+  # để danh mục lúc test có cả khoản mới giải ngân như danh mục thật.
+  vintage_years: [2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
+                  2020, 2021, 2022, 2023, 2024, 2025]
 
 monitoring:
   reporting_month: null   # "YYYY-MM"; null = tháng mới nhất có trong dữ liệu
