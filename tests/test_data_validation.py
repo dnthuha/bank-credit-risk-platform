@@ -117,11 +117,15 @@ def test_valid_fixtures_pass(settings, contracts):
 def test_invalid_fixture_fails_on_the_broken_rules(settings, contracts):
     raw = write_home_credit_raw(settings)
     train = pd.read_csv(raw / "application_train.csv")
-    train.loc[1, "SK_ID_CURR"] = train.loc[0, "SK_ID_CURR"]  # duplicate key -> error
     train.loc[2, "TARGET"] = 2                                # outside {0, 1} -> error
-    train.loc[3, "CODE_GENDER"] = "Unknown"                    # unexpected category -> warn
-    train.loc[4, "DAYS_BIRTH"] = 500                           # positive relative date -> warn
+    train.loc[3, "CODE_GENDER"] = "Unknown"                    # unexpected category -> error
+    train.loc[4, "DAYS_BIRTH"] = 500                           # future relative date -> error
+    # Duplicate key by copying a row (overwriting an id would also orphan its child rows).
+    train = pd.concat([train, train.iloc[[0]]], ignore_index=True)  # duplicate key -> error
     train.to_csv(raw / "application_train.csv", index=False)
+    bureau = pd.read_csv(raw / "bureau.csv")
+    bureau.loc[0, "DAYS_CREDIT_UPDATE"] = 10                   # known source issue -> warn
+    bureau.to_csv(raw / "bureau.csv", index=False)
 
     contract = contracts["home_credit"]
     con = connect(settings)
@@ -132,22 +136,46 @@ def test_invalid_fixture_fails_on_the_broken_rules(settings, contracts):
     assert {(r.table, r.check, r.column) for r in report.errors} == {
         ("application_train", "unique_key", "SK_ID_CURR"),
         ("application_train", "allowed_values", "TARGET"),
-    }
-    assert {(r.table, r.check, r.column) for r in report.warnings} == {
         ("application_train", "allowed_values", "CODE_GENDER"),
         ("application_train", "range", "DAYS_BIRTH"),
+    }
+    assert {(r.table, r.check, r.column) for r in report.warnings} == {
+        ("bureau", "range", "DAYS_CREDIT_UPDATE"),
     }
     duplicate = next(r for r in report.errors if r.check == "unique_key")
     assert duplicate.n_failed == 1
 
 
-def test_sentinel_values_are_not_range_violations(settings, contracts):
-    write_home_credit_raw(settings)  # fixture contains DAYS_EMPLOYED = 365243
+def test_known_source_issue_warns_without_blocking(settings, contracts):
+    raw = write_home_credit_raw(settings)
+    bureau = pd.read_csv(raw / "bureau.csv")
+    bureau.loc[[0, 1], "DAYS_CREDIT_UPDATE"] = [5, 372]  # bureau updated after the application date
+    bureau.to_csv(raw / "bureau.csv", index=False)
     contract = contracts["home_credit"]
     con = connect(settings)
     ingest_source(contract, settings, con, "test")
     report = validate_source(contract, settings, con)
-    assert ("application_train", "range", "DAYS_EMPLOYED") not in failed_checks(report)
+    assert report.passed
+    assert [(r.table, r.column, r.n_failed) for r in report.warnings] == [("bureau", "DAYS_CREDIT_UPDATE", 2)]
+
+
+def test_sentinel_values_are_not_range_violations(settings, contracts):
+    raw = write_home_credit_raw(settings)  # fixture contains 365243 in DAYS_EMPLOYED and previous_application dates
+    contract = contracts["home_credit"]
+    con = connect(settings)
+    ingest_source(contract, settings, con, "test")
+    failed = failed_checks(validate_source(contract, settings, con))
+    assert ("application_train", "range", "DAYS_EMPLOYED") not in failed
+    assert ("previous_application", "range", "DAYS_TERMINATION") not in failed
+
+    # A real future date next to the sentinel is still caught.
+    prev = pd.read_csv(raw / "previous_application.csv")
+    prev.loc[1, "DAYS_TERMINATION"] = 30.0
+    prev.to_csv(raw / "previous_application.csv", index=False)
+    ingest_source(contract, settings, con, "test")
+    assert ("previous_application", "range", "DAYS_TERMINATION") in failed_checks(
+        validate_source(contract, settings, con)
+    )
 
 
 def test_missing_column_and_missing_table(settings, contracts):
@@ -173,8 +201,8 @@ def test_orphan_foreign_keys_are_reported(settings, contracts):
     ingest_source(contract, settings, con, "test")
     report = validate_source(contract, settings, con)
     orphan = next(r for r in report.results if r.check == "foreign_key" and r.table == "bureau")
-    assert orphan.n_failed == 1 and orphan.severity == "warn"
-    assert report.passed  # warn does not block
+    assert orphan.n_failed == 1 and orphan.severity == "error"
+    assert not report.passed  # 0 orphans on the real data, so an orphan means the pipeline broke
 
 
 def test_orphans_are_still_found_when_referenced_keys_contain_null(settings, contracts):

@@ -27,7 +27,7 @@ Cùng với đó: pipeline chạy bằng một lệnh, test tự động cho ph�
 
 | # | Vấn đề | Quyết định | Hệ quả phải ghi nhận |
 |---|---|---|---|
-| 1 | Home Credit không có ngày nộp đơn, `application_test` không có nhãn | Stratified random split train / validation / calibration / test (60/10/15/15). `application_test` là mẫu hiện tại để tính PSI. | **Không có out-of-time thật.** Ghi rõ trong model card và validation report. |
+| 1 | Home Credit không có ngày nộp đơn, `application_test` không có nhãn | Stratified random split train / validation / calibration / test (60/10/15/15). `application_test` là mẫu hiện tại để tính PSI. | **Không có out-of-time thật.** Ghi rõ trong model card và validation report. `application_test` có population khác train (Revolving loans 0.9% so với 9.5%), nên PSI phải tách theo `NAME_CONTRACT_TYPE`; xem [docs/data_quality_home_credit.md](docs/data_quality_home_credit.md). |
 | 2 | Chọn Fannie Mae hay Freddie Mac | Freddie Mac **sample dataset**, vintage 2012-2019 | 50k khoản vay / năm là mẫu ngẫu nhiên, không phải toàn bộ danh mục. |
 | 3 | Forbearance COVID 2020-2021 làm tỷ lệ quá hạn tăng vọt | 2020-03 → 2021-12 là **stress segment**: không train, đánh giá riêng | Out-of-time sau COVID bắt đầu từ 2022-01. |
 | 4 | Laptop khoảng 7.4 GB RAM | DuckDB + parquet, giới hạn RAM của DuckDB qua `.env` | Bảng panel lớn phải xử lý trong DuckDB, không load hết vào pandas. |

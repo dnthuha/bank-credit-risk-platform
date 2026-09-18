@@ -64,6 +64,9 @@ def write_home_credit_raw(settings: Settings) -> Path:
             "EXT_SOURCE_2": rng.random(n),
             "EXT_SOURCE_3": rng.random(n),
             "FLAG_OWN_CAR": rng.choice(["Y", "N"], n),
+            "DAYS_REGISTRATION": -10.0 * np.arange(n),
+            "DAYS_ID_PUBLISH": -7 * np.arange(n),
+            "DAYS_LAST_PHONE_CHANGE": -3.0 * np.arange(n),
         }
     ).to_csv(raw / "application_train.csv", index=False)
 
@@ -73,6 +76,10 @@ def write_home_credit_raw(settings: Settings) -> Path:
             "AMT_INCOME_TOTAL": rng.uniform(5e4, 3e5, 10).round(1),
             "AMT_CREDIT": rng.uniform(1e5, 1e6, 10).round(1),
             "DAYS_BIRTH": -rng.integers(7000, 25000, 10),
+            "DAYS_EMPLOYED": np.r_[365243, -100 * np.arange(1, 10)],
+            "DAYS_REGISTRATION": -10.0 * np.arange(10),
+            "DAYS_ID_PUBLISH": -7 * np.arange(10),
+            "DAYS_LAST_PHONE_CHANGE": -3.0 * np.arange(10),
         }
     ).to_csv(raw / "application_test.csv", index=False)
 
@@ -83,6 +90,8 @@ def write_home_credit_raw(settings: Settings) -> Path:
             "SK_ID_CURR": rng.choice(np.r_[ids, test_ids], 60),
             "CREDIT_ACTIVE": rng.choice(["Closed", "Active"], 60),
             "DAYS_CREDIT": -rng.integers(1, 3000, 60),
+            "DAYS_ENDDATE_FACT": np.where(np.arange(60) % 2 == 0, np.nan, -5.0 * np.arange(60)),
+            "DAYS_CREDIT_UPDATE": -2 * np.arange(60),
         }
     ).to_csv(raw / "bureau.csv", index=False)
 
@@ -102,6 +111,10 @@ def write_home_credit_raw(settings: Settings) -> Path:
             "SK_ID_CURR": prev_curr,
             "NAME_CONTRACT_STATUS": rng.choice(["Approved", "Refused"], 30),
             "DAYS_DECISION": -rng.integers(1, 2000, 30),
+            "DAYS_FIRST_DRAWING": np.where(np.arange(30) % 3 == 0, 365243.0, -50.0 - np.arange(30)),
+            "DAYS_FIRST_DUE": -40.0 - np.arange(30),
+            "DAYS_LAST_DUE": np.where(np.arange(30) % 4 == 0, 365243.0, -10.0 - np.arange(30)),
+            "DAYS_TERMINATION": np.where(np.arange(30) % 4 == 0, 365243.0, -5.0 - np.arange(30)),
         }
     ).to_csv(raw / "previous_application.csv", index=False)
 

@@ -12,8 +12,18 @@
 #   sentinel_values giá trị đặc biệt có ý nghĩa, GIỮ NGUYÊN khi ingest, không tính vào min/max
 #   severity       error (mặc định: fail là dừng pipeline) | warn (chỉ báo cáo)
 #
-# Rule đánh dấu warn là rule chưa xác nhận trên dữ liệu thật. Sau lần chạy
-# validate-data đầu tiên, rule nào đúng thì nâng lên error.
+# Severity:
+#   Lần validate-data đầu tiên trên dữ liệu thật (2026-09-18, run
+#   20260918T151537Z-b0481463) đạt 103/103 check, nên mọi rule warn đã được
+#   nâng lên error. Dữ liệu Kaggle là bộ tĩnh: rule nào fail về sau thì lỗi nằm
+#   ở pipeline, phải dừng.
+#   Rule còn để warn là vấn đề ĐÃ BIẾT của dữ liệu gốc: ghi rõ số dòng và nơi xử lý.
+#   Profile chi tiết và các phát hiện: docs/data_quality_home_credit.md
+#
+# Thời gian: mọi cột DAYS_* / MONTHS_BALANCE là số ngày / tháng so với ngày nộp
+# đơn HIỆN TẠI. Âm = trước ngày nộp đơn (đã biết lúc chấm điểm). Dương = sau
+# ngày nộp đơn, tức thông tin tương lai: rule max: 0 là hàng rào chống leakage.
+# 365243 (khoảng 1000 năm) là mã "không áp dụng", không phải số ngày thật.
 
 source: home_credit
 raw_subdir: home_credit
@@ -28,99 +38,140 @@ tables:
     columns:
       SK_ID_CURR: {dtype: integer, role: key, nullable: false}
       TARGET: {dtype: integer, role: target, nullable: false, allowed_values: [0, 1]}
-      NAME_CONTRACT_TYPE: {dtype: string, allowed_values: ["Cash loans", "Revolving loans"], severity: warn}
-      CODE_GENDER: {dtype: string, allowed_values: [M, F, XNA], severity: warn}
-      AMT_INCOME_TOTAL: {dtype: number, nullable: false, min: 0, severity: warn}
-      AMT_CREDIT: {dtype: number, nullable: false, min: 0, severity: warn}
-      AMT_ANNUITY: {dtype: number, max_missing: 0.01, severity: warn}
-      DAYS_BIRTH: {dtype: integer, role: relative_date, nullable: false, max: 0, severity: warn}
+      NAME_CONTRACT_TYPE: {dtype: string, allowed_values: ["Cash loans", "Revolving loans"]}
+      CODE_GENDER: {dtype: string, allowed_values: [M, F, XNA]}   # XNA: 4 dòng -> gộp hạng mục hiếm ở binning
+      AMT_INCOME_TOTAL: {dtype: number, nullable: false, min: 0}  # có 1 outlier 117 triệu
+      AMT_CREDIT: {dtype: number, nullable: false, min: 0}
+      AMT_ANNUITY: {dtype: number, max_missing: 0.01}
+      DAYS_BIRTH: {dtype: integer, role: relative_date, nullable: false, max: 0}
       DAYS_EMPLOYED:
         dtype: integer
         role: relative_date
         max: 0
-        sentinel_values: [365243]   # hưu trí / không đi làm; xử lý ở bước features
-        severity: warn
-      EXT_SOURCE_1: {dtype: number, min: 0, max: 1, severity: warn}
-      EXT_SOURCE_2: {dtype: number, min: 0, max: 1, severity: warn}
-      EXT_SOURCE_3: {dtype: number, min: 0, max: 1, severity: warn}
+        sentinel_values: [365243]   # 55,374 dòng (18%), gần như toàn Pensioner: nhóm riêng, không phải missing
+      DAYS_REGISTRATION: {dtype: number, role: relative_date, max: 0}
+      DAYS_ID_PUBLISH: {dtype: integer, role: relative_date, max: 0}
+      DAYS_LAST_PHONE_CHANGE: {dtype: number, role: relative_date, max: 0}
+      EXT_SOURCE_1: {dtype: number, min: 0, max: 1}   # thiếu 56%: giữ bin missing riêng
+      EXT_SOURCE_2: {dtype: number, min: 0, max: 1}
+      EXT_SOURCE_3: {dtype: number, min: 0, max: 1}   # thiếu 20%
 
   application_test:
     file: application_test.csv
-    description: "Hồ sơ vay KHÔNG có nhãn. Dùng làm mẫu hiện tại khi tính PSI."
+    description: >-
+      Hồ sơ vay KHÔNG có nhãn. Dùng làm mẫu hiện tại khi tính PSI. Lưu ý: tỷ trọng
+      Revolving loans chỉ 0.9% so với 9.5% ở train, nên PSI chắc chắn phản ánh cả
+      khác biệt do cách chọn mẫu.
     primary_key: [SK_ID_CURR]
     min_rows: 1
     columns:
       SK_ID_CURR: {dtype: integer, role: key, nullable: false}
-      AMT_INCOME_TOTAL: {dtype: number, nullable: false, min: 0, severity: warn}
-      AMT_CREDIT: {dtype: number, nullable: false, min: 0, severity: warn}
-      DAYS_BIRTH: {dtype: integer, role: relative_date, nullable: false, max: 0, severity: warn}
+      AMT_INCOME_TOTAL: {dtype: number, nullable: false, min: 0}
+      AMT_CREDIT: {dtype: number, nullable: false, min: 0}
+      DAYS_BIRTH: {dtype: integer, role: relative_date, nullable: false, max: 0}
+      DAYS_EMPLOYED: {dtype: integer, role: relative_date, max: 0, sentinel_values: [365243]}
+      DAYS_REGISTRATION: {dtype: number, role: relative_date, max: 0}
+      DAYS_ID_PUBLISH: {dtype: integer, role: relative_date, max: 0}
+      DAYS_LAST_PHONE_CHANGE: {dtype: number, role: relative_date, max: 0}
 
+  # DAYS_CREDIT_ENDDATE (không có rule): giá trị dương là thời hạn còn lại theo hợp đồng,
+  # đã biết lúc nộp đơn, nên hợp lệ. DAYS_CREDIT_ENDDATE / DAYS_ENDDATE_FACT / DAYS_CREDIT_UPDATE
+  # có giá trị cũ tới -42,060 (khoảng 115 năm) trong khi DAYS_CREDIT >= -2,922: bất khả thi, clip ở bước features.
   bureau:
     file: bureau.csv
     description: "Khoản vay ở tổ chức tín dụng khác, báo cáo qua credit bureau. Nhiều dòng / hồ sơ."
     primary_key: [SK_ID_BUREAU]
     min_rows: 1
     foreign_keys:
-      - {column: SK_ID_CURR, references: [application_train.SK_ID_CURR, application_test.SK_ID_CURR], severity: warn}
+      - {column: SK_ID_CURR, references: [application_train.SK_ID_CURR, application_test.SK_ID_CURR]}
     columns:
       SK_ID_BUREAU: {dtype: integer, role: key, nullable: false}
       SK_ID_CURR: {dtype: integer, role: key, nullable: false}
-      CREDIT_ACTIVE: {dtype: string, allowed_values: [Closed, Active, Sold, "Bad debt"], severity: warn}
-      DAYS_CREDIT: {dtype: integer, role: relative_date, max: 0, severity: warn}
+      CREDIT_ACTIVE: {dtype: string, allowed_values: [Closed, Active, Sold, "Bad debt"]}
+      DAYS_CREDIT: {dtype: integer, role: relative_date, max: 0}
+      DAYS_ENDDATE_FACT: {dtype: number, role: relative_date, max: 0}
+      DAYS_CREDIT_UPDATE:
+        dtype: integer
+        role: relative_date
+        max: 0
+        # VẤN ĐỀ ĐÃ BIẾT: 17 dòng > 0 (tối đa +372), tức thông tin cập nhật SAU ngày
+        # nộp đơn -> leakage. Không sửa được ở nguồn; loại ở bước features.
+        severity: warn
 
+  # 3,120,184 dòng (11.4%) có SK_ID_BUREAU không có trong bureau. Bảng này không có
+  # SK_ID_CURR nên các dòng đó không gắn được với hồ sơ nào: bỏ qua khi tổng hợp.
+  # Không đặt foreign key rule vì đây là đặc điểm của dữ liệu gốc.
   bureau_balance:
     file: bureau_balance.csv
     description: "Trạng thái hằng tháng của khoản vay bureau."
     primary_key: [SK_ID_BUREAU, MONTHS_BALANCE]
-    primary_key_severity: warn
     min_rows: 1
     columns:
       SK_ID_BUREAU: {dtype: integer, role: key, nullable: false}
-      MONTHS_BALANCE: {dtype: integer, role: relative_date, nullable: false, max: 0, severity: warn}
-      STATUS: {dtype: string, allowed_values: [C, X, "0", "1", "2", "3", "4", "5"], severity: warn}
+      MONTHS_BALANCE: {dtype: integer, role: relative_date, nullable: false, max: 0}
+      STATUS: {dtype: string, allowed_values: [C, X, "0", "1", "2", "3", "4", "5"]}
 
+  # DAYS_LAST_DUE_1ST_VERSION (không có rule): 224,392 dòng dương là ngày đáo hạn dự kiến
+  # theo hợp đồng cũ, đã biết lúc nộp đơn, nên hợp lệ.
   previous_application:
     file: previous_application.csv
     description: "Các lần nộp hồ sơ trước tại Home Credit và kết quả xét duyệt."
     primary_key: [SK_ID_PREV]
     min_rows: 1
+    foreign_keys:
+      - {column: SK_ID_CURR, references: [application_train.SK_ID_CURR, application_test.SK_ID_CURR]}
     columns:
       SK_ID_PREV: {dtype: integer, role: key, nullable: false}
       SK_ID_CURR: {dtype: integer, role: key, nullable: false}
-      NAME_CONTRACT_STATUS: {dtype: string, allowed_values: [Approved, Refused, Canceled, "Unused offer"], severity: warn}
-      DAYS_DECISION: {dtype: integer, role: relative_date, max: 0, severity: warn}
+      NAME_CONTRACT_STATUS: {dtype: string, allowed_values: [Approved, Refused, Canceled, "Unused offer"]}
+      DAYS_DECISION: {dtype: integer, role: relative_date, max: 0}
+      DAYS_FIRST_DRAWING: {dtype: number, role: relative_date, max: 0, sentinel_values: [365243]}  # sentinel: 934,444 dòng
+      DAYS_FIRST_DUE: {dtype: number, role: relative_date, max: 0, sentinel_values: [365243]}      # 40,645
+      DAYS_LAST_DUE: {dtype: number, role: relative_date, max: 0, sentinel_values: [365243]}       # 211,221
+      DAYS_TERMINATION: {dtype: number, role: relative_date, max: 0, sentinel_values: [365243]}    # 225,913
 
+  # Ba bảng hằng tháng dưới đây: nhiều SK_ID_PREV không có trong previous_application
+  # (POS 340,561 dòng = 3.4%; credit card 1,082,816 = 28%; installments 1,250,826 = 9.2%),
+  # còn SK_ID_CURR thì khớp 100%. Tổng hợp trực tiếp theo SK_ID_CURR, không join qua
+  # previous_application (sẽ mất các dòng đó).
   pos_cash_balance:
     file: POS_CASH_balance.csv
     description: "Số dư hằng tháng của khoản POS / cash loan trước đó."
     primary_key: [SK_ID_PREV, MONTHS_BALANCE]
-    primary_key_severity: warn
     min_rows: 1
+    foreign_keys:
+      - {column: SK_ID_CURR, references: [application_train.SK_ID_CURR, application_test.SK_ID_CURR]}
     columns:
       SK_ID_PREV: {dtype: integer, role: key, nullable: false}
       SK_ID_CURR: {dtype: integer, role: key, nullable: false}
-      MONTHS_BALANCE: {dtype: integer, role: relative_date, nullable: false, max: 0, severity: warn}
+      MONTHS_BALANCE: {dtype: integer, role: relative_date, nullable: false, max: 0}
 
   credit_card_balance:
     file: credit_card_balance.csv
     description: "Số dư hằng tháng của thẻ tín dụng trước đó."
     primary_key: [SK_ID_PREV, MONTHS_BALANCE]
-    primary_key_severity: warn
     min_rows: 1
+    foreign_keys:
+      - {column: SK_ID_CURR, references: [application_train.SK_ID_CURR, application_test.SK_ID_CURR]}
     columns:
       SK_ID_PREV: {dtype: integer, role: key, nullable: false}
       SK_ID_CURR: {dtype: integer, role: key, nullable: false}
-      MONTHS_BALANCE: {dtype: integer, role: relative_date, nullable: false, max: 0, severity: warn}
+      MONTHS_BALANCE: {dtype: integer, role: relative_date, nullable: false, max: 0}
 
   installments_payments:
     file: installments_payments.csv
-    description: "Lịch trả theo kế hoạch so với thực tế. Không có khoá duy nhất: một kỳ có thể trả nhiều lần."
+    description: >-
+      Lịch trả theo kế hoạch so với thực tế. Không có khoá duy nhất: một kỳ có thể
+      trả nhiều lần. 2,905 dòng thiếu cùng lúc DAYS_ENTRY_PAYMENT và AMT_PAYMENT
+      (không có bản ghi thanh toán).
     min_rows: 1
+    foreign_keys:
+      - {column: SK_ID_CURR, references: [application_train.SK_ID_CURR, application_test.SK_ID_CURR]}
     columns:
       SK_ID_PREV: {dtype: integer, role: key, nullable: false}
       SK_ID_CURR: {dtype: integer, role: key, nullable: false}
       NUM_INSTALMENT_NUMBER: {dtype: integer}
-      DAYS_INSTALMENT: {dtype: number, role: relative_date}
-      DAYS_ENTRY_PAYMENT: {dtype: number, role: relative_date}
-      AMT_INSTALMENT: {dtype: number, min: 0, severity: warn}
-      AMT_PAYMENT: {dtype: number, min: 0, severity: warn}
+      DAYS_INSTALMENT: {dtype: number, role: relative_date, max: 0}
+      DAYS_ENTRY_PAYMENT: {dtype: number, role: relative_date, max: 0}
+      AMT_INSTALMENT: {dtype: number, min: 0}
+      AMT_PAYMENT: {dtype: number, min: 0}

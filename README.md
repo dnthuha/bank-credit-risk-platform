@@ -9,13 +9,14 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 
 - Phạm vi, quyết định đã chốt và các giới hạn: [PROJECT_SCOPE.md](PROJECT_SCOPE.md)
 - Cách tải dữ liệu: [data/README.md](data/README.md)
+- Chất lượng dữ liệu Home Credit: [docs/data_quality_home_credit.md](docs/data_quality_home_credit.md)
 - Định nghĩa nghiệp vụ (single source of truth): [configs/definitions.yaml](configs/definitions.yaml)
 
 ## Trạng thái
 
 | Chặng | Nội dung | Trạng thái |
 |---|---|---|
-| 1 | Nền móng: repo, môi trường, data contract, định nghĩa, ingest, data validation, test lõi | Xong phần code; còn chờ tải dữ liệu thật |
+| 1 | Nền móng: repo, môi trường, data contract, định nghĩa, ingest, data validation, test lõi | Home Credit: dữ liệu thật đã qua validate (135 check, 0 error). Còn Freddie Mac |
 | 2 | WoE / IV, binning, rà soát leakage | |
 | 3 | Scorecard | |
 | 4 | LightGBM challenger | |
@@ -76,6 +77,7 @@ bank-credit-risk-platform/
 │   ├── ews.yaml                  # vintage, time split, alert capacity
 │   └── data_contracts/           # data dictionary + rule kiểm tra cho từng nguồn
 ├── data/README.md                # chỉ hướng dẫn tải
+├── docs/                         # data quality, phát hiện từ dữ liệu thật
 ├── src/credit_risk/
 │   ├── data/                     # contracts, ingest, validate (DuckDB)
 │   ├── features/                 # woe.py
