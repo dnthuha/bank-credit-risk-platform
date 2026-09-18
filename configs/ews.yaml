@@ -1,0 +1,34 @@
+# MODULE 3 — Portfolio Monitoring & Early Warning (Freddie Mac sample)
+# Định nghĩa bucket, default, cửa sổ, COVID: xem definitions.yaml.
+
+seed: 7
+
+data:
+  vintage_years: [2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019]
+
+monitoring:
+  reporting_month: null   # "YYYY-MM"; null = tháng mới nhất có trong dữ liệu
+  vintage_granularity: quarter
+  delinquency_rates: [dpd30, dpd60, dpd90plus]
+  concentration_dimensions: [fico_band, ltv_band, dti_band, property_state, vintage, channel]
+
+ews:
+  # Split theo observation month t. Cuối mỗi đoạn lùi 3 tháng để cửa sổ nhãn
+  # t+1..t+3 không chạm sang đoạn kế tiếp.
+  time_split:
+    train:       {start: "2014-01", end: "2018-09"}
+    validation:  {start: "2019-01", end: "2019-09"}
+    stress_test: {start: "2020-03", end: "2021-09"}   # covid_period
+    out_of_time: {start: "2022-01", end: null}        # null = tháng cuối còn đủ t+3
+  # Quy tắc gán nhãn và loại trừ nằm trong credit_risk.ews.labels, có unit test.
+  cohort_exclusions:
+    - inactive_at_t                  # đã zero balance tại t hoặc trước t
+    - already_90plus_at_t            # đã xấu sẵn, không phải "sắp xấu"
+    - status_not_available_at_t      # mã XX: không biết trạng thái tại t
+    - incomplete_performance_window  # thiếu tháng, exit không rõ kết cục, hoặc hết dữ liệu trước t+3
+  baseline_model: logistic_regression
+  challenger_model: lightgbm
+  evaluation_metrics: [pr_auc, roc_auc, lift_top_5pct, capture_top_10pct, brier]
+  alert:
+    method: capacity
+    capacity_share: 0.05   # đội vận hành xử lý được 5% khoản vay mỗi tháng

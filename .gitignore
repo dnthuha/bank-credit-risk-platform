@@ -1,0 +1,29 @@
+# Dữ liệu: không bao giờ commit dữ liệu thô hay bảng đã xử lý
+data/*
+!data/README.md
+
+# Output sinh ra khi chạy pipeline
+artifacts/
+reports/*
+!reports/.gitkeep
+
+# Cấu hình theo máy
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+build/
+dist/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Virtual environment
+.venv/

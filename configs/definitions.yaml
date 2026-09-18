@@ -1,0 +1,104 @@
+# =====================================================================
+# DEFINITIONS — single source of truth cho mọi định nghĩa nghiệp vụ.
+# Chốt file này TRƯỚC khi modeling. Sửa định nghĩa = đổi config hash =
+# mọi run sau đó được đánh dấu là chạy trên định nghĩa mới.
+# =====================================================================
+version: 1
+
+# ---------------------------------------------------------------------
+# Delinquency buckets (DPD, cận hai đầu đều tính vào nhóm)
+# ---------------------------------------------------------------------
+delinquency_buckets:
+  - {name: current,   dpd_min: 0,  dpd_max: 29}
+  - {name: dpd30,     dpd_min: 30, dpd_max: 59}
+  - {name: dpd60,     dpd_min: 60, dpd_max: 89}
+  - {name: dpd90plus, dpd_min: 90, dpd_max: null}
+
+# ---------------------------------------------------------------------
+# MODULE 1-2: Home Credit (application scoring)
+# ---------------------------------------------------------------------
+home_credit:
+  unit_of_observation: "Một hồ sơ vay (SK_ID_CURR) tại thời điểm nộp đơn"
+  target:
+    column: TARGET
+    bad_value: 1      # khách gặp khó khăn trả nợ ở những kỳ đầu
+    good_value: 0
+    indeterminate: none   # TARGET nhị phân, không có nhóm indeterminate
+  time_axis:
+    # Mọi cột DAYS_* chỉ là số ngày tương đối so với ngày nộp đơn.
+    application_date_available: false
+    out_of_time_sample_available: false
+    limitation: >-
+      Không dựng được mẫu out-of-time thật. Split là stratified random
+      (xem model_dev.yaml). Giới hạn này phải ghi trong model card và
+      validation report.
+  psi:
+    # PSI chỉ cần phân phối score, không cần nhãn -> dùng application_test
+    # (không có TARGET) làm "mẫu hiện tại".
+    reference_sample: train
+    current_sample: application_test
+
+# ---------------------------------------------------------------------
+# MODULE 3: Freddie Mac Single-Family Loan-Level Dataset (sample)
+# Mã nguồn: General User Guide, layout áp dụng từ July 2026 (Release 47).
+# ---------------------------------------------------------------------
+mortgage:
+  source: freddie_mac_sample
+  unit_of_observation: "Một cặp khoản vay - tháng báo cáo (loan_id, period)"
+
+  delinquency_status_codes:
+    current: ["00"]
+    dpd30: ["01"]
+    dpd60: ["02"]
+    dpd90plus_min_numeric_code: 3   # "03" (90-119 ngày) ... "99" (đã cap)
+    reo_acquisition: RA             # REO acquisition -> xếp vào dpd90plus
+    not_available: XX               # -> trạng thái missing, không đoán
+
+  zero_balance_codes:
+    voluntary_payoff: ["01"]        # prepaid hoặc matured: competing event
+    liquidation: ["02", "03", "09"] # third party sale, short sale/charge off, REO disposition
+    other_exit: ["15", "16", "96"]  # whole loan sale, RPL securitization, defect: kết cục không quan sát được
+
+  default_event: >-
+    Tháng đầu tiên khoản vay ở dpd90plus (gồm RA) HOẶC có zero balance code
+    thuộc nhóm liquidation.
+  redefault_after_cure_counts_as_event: true   # đã từng 90+, cure, rồi lại 90+ -> vẫn là event
+  cure: "Chuyển từ bucket xấu hơn sang bucket tốt hơn giữa hai tháng liên tiếp"
+
+# ---------------------------------------------------------------------
+# Cửa sổ thời gian (tính theo tháng, quanh observation date t)
+# ---------------------------------------------------------------------
+windows:
+  observation_months: 6   # t-6 ... t: xây feature
+  performance_months: 3   # t+1 ... t+3: gán nhãn
+
+# ---------------------------------------------------------------------
+# Giai đoạn COVID: forbearance làm tỷ lệ quá hạn tăng không phản ánh
+# rủi ro thông thường. Quyết định: tách làm stress segment, không train.
+# ---------------------------------------------------------------------
+covid_period:
+  start: "2020-03"
+  end: "2021-12"
+  treatment: stress_segment   # exclude | stress_segment | oot
+
+# ---------------------------------------------------------------------
+# Score scaling: Score = Offset + Factor * ln(odds), odds = Good:Bad
+# ---------------------------------------------------------------------
+scorecard_scaling:
+  base_score: 600
+  base_odds: 50
+  pdo: 20
+
+# ---------------------------------------------------------------------
+# Ngưỡng chỉ số: mốc tham khảo để rà soát, không phải quy định pháp lý
+# ---------------------------------------------------------------------
+metric_thresholds:
+  psi:
+    stable_below: 0.10
+    significant_above: 0.25
+    zero_bin_epsilon: 1.0e-4   # thay cho tỷ trọng 0 trong một bin
+  woe:
+    zero_count_adjustment: 0.5 # cộng vào good/bad của mọi bin nếu có bin 0 good hoặc 0 bad
+  iv:
+    min_useful: 0.02
+    leakage_suspect_above: 0.50

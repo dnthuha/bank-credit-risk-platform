@@ -1,0 +1,41 @@
+# MODULE 2 — Independent Model Validation
+# Nguyên tắc: đọc model package đã đóng băng, tự tính lại mọi chỉ số từ đầu.
+# Code metric nằm ở credit_risk.validation (numpy thuần), độc lập với sklearn
+# mà Module 1 dùng lúc phát triển.
+
+seed: 2026   # khác seed phát triển một cách có chủ đích
+
+population_reconciliation:
+  abs_tolerance_rows: 0         # số dòng phải khớp chính xác với model card
+  abs_tolerance_bad_rate: 1.0e-6
+
+discrimination:
+  metrics: [auc, gini, ks]
+  samples: [train, test]
+
+calibration:
+  n_bins: 10
+  metrics: [brier, calibration_slope, calibration_intercept]
+
+stability:
+  psi_n_bins: 10
+  # ngưỡng: definitions.metric_thresholds.psi
+  top_features_for_psi: 5
+
+uncertainty:
+  bootstrap_resamples: 1000
+  confidence_level: 0.95
+  method: percentile
+  stratified: true
+
+segments:
+  - {name: score_band, column: score_band}
+  - {name: contract_type, column: NAME_CONTRACT_TYPE}
+  - {name: ext_source_missing_pattern, column: ext_source_missing_pattern}
+
+implementation_check:
+  sample_size: 5000
+  abs_tolerance_pd: 1.0e-9
+
+# Quy tắc ra kết luận (Đạt / Đạt có lưu ý / Phải khắc phục): chặng 7
+conclusion_rules: {}

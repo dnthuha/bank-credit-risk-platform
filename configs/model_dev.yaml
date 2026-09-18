@@ -1,0 +1,48 @@
+# MODULE 1 — Model Development (Home Credit)
+# Định nghĩa target, population: xem definitions.yaml -> home_credit.
+
+seed: 42
+population: application_train
+
+# Home Credit không có ngày nộp đơn -> stratified random split, gán một lần,
+# lưu lại theo SK_ID_CURR để scorecard và LightGBM dùng đúng cùng population.
+split:
+  method: stratified_random
+  id_column: SK_ID_CURR
+  stratify_on: TARGET
+  fractions:
+    train: 0.60        # fit binning, WoE, scorecard, LightGBM
+    validation: 0.10   # early stopping, chọn biến, so sánh cấu hình
+    calibration: 0.15  # chỉ để fit Platt / isotonic
+    test: 0.15         # chỉ đánh giá cuối, không dùng để ra quyết định trong lúc phát triển
+
+binning:
+  initial_quantile_bins: 20
+  max_bins: 8
+  min_bin_share: 0.05
+  prefer_monotonic_trend: true
+  missing_as_own_bin: true
+  rare_category_share: 0.01
+
+feature_selection:
+  iv_min: 0.02                  # tham chiếu definitions.metric_thresholds.iv
+  max_abs_correlation: 0.70
+  max_vif: 5.0
+  require_stable_coefficient_sign: true
+
+champion:
+  model: woe_logistic_scorecard
+  regularization: l2
+
+challenger:
+  model: lightgbm
+  early_stopping_rounds: 100
+  max_trials: 30                # không gian tham số nhỏ, mọi cấu hình đều được log
+
+calibration:
+  methods: [platt, isotonic]
+  n_bins_for_diagnostics: 10
+
+explainability:
+  reason_codes_per_applicant: 4
+  shap_waterfall_examples: 5

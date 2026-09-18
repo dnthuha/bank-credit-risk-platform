@@ -1,0 +1,126 @@
+# DATA CONTRACT + DATA DICTIONARY — Home Credit Default Risk (Kaggle)
+#
+# Chỉ khai báo các cột có vai trò (key, target, ngày tương đối) hoặc có rule.
+# Mô tả đầy đủ mọi cột: HomeCredit_columns_description.csv đi kèm dữ liệu.
+#
+# Quy ước rule:
+#   dtype          integer | number | string | date   (number chấp nhận cả integer)
+#   nullable       false -> không được thiếu
+#   max_missing    tỷ lệ thiếu tối đa (0-1)
+#   allowed_values tập giá trị hợp lệ
+#   min / max      miền giá trị (tính cả hai đầu); bỏ qua sentinel_values
+#   sentinel_values giá trị đặc biệt có ý nghĩa, GIỮ NGUYÊN khi ingest, không tính vào min/max
+#   severity       error (mặc định: fail là dừng pipeline) | warn (chỉ báo cáo)
+#
+# Rule đánh dấu warn là rule chưa xác nhận trên dữ liệu thật. Sau lần chạy
+# validate-data đầu tiên, rule nào đúng thì nâng lên error.
+
+source: home_credit
+raw_subdir: home_credit
+format: csv
+
+tables:
+  application_train:
+    file: application_train.csv
+    description: "Hồ sơ vay có nhãn. Một dòng = một hồ sơ tại thời điểm nộp đơn."
+    primary_key: [SK_ID_CURR]
+    min_rows: 1
+    columns:
+      SK_ID_CURR: {dtype: integer, role: key, nullable: false}
+      TARGET: {dtype: integer, role: target, nullable: false, allowed_values: [0, 1]}
+      NAME_CONTRACT_TYPE: {dtype: string, allowed_values: ["Cash loans", "Revolving loans"], severity: warn}
+      CODE_GENDER: {dtype: string, allowed_values: [M, F, XNA], severity: warn}
+      AMT_INCOME_TOTAL: {dtype: number, nullable: false, min: 0, severity: warn}
+      AMT_CREDIT: {dtype: number, nullable: false, min: 0, severity: warn}
+      AMT_ANNUITY: {dtype: number, max_missing: 0.01, severity: warn}
+      DAYS_BIRTH: {dtype: integer, role: relative_date, nullable: false, max: 0, severity: warn}
+      DAYS_EMPLOYED:
+        dtype: integer
+        role: relative_date
+        max: 0
+        sentinel_values: [365243]   # hưu trí / không đi làm; xử lý ở bước features
+        severity: warn
+      EXT_SOURCE_1: {dtype: number, min: 0, max: 1, severity: warn}
+      EXT_SOURCE_2: {dtype: number, min: 0, max: 1, severity: warn}
+      EXT_SOURCE_3: {dtype: number, min: 0, max: 1, severity: warn}
+
+  application_test:
+    file: application_test.csv
+    description: "Hồ sơ vay KHÔNG có nhãn. Dùng làm mẫu hiện tại khi tính PSI."
+    primary_key: [SK_ID_CURR]
+    min_rows: 1
+    columns:
+      SK_ID_CURR: {dtype: integer, role: key, nullable: false}
+      AMT_INCOME_TOTAL: {dtype: number, nullable: false, min: 0, severity: warn}
+      AMT_CREDIT: {dtype: number, nullable: false, min: 0, severity: warn}
+      DAYS_BIRTH: {dtype: integer, role: relative_date, nullable: false, max: 0, severity: warn}
+
+  bureau:
+    file: bureau.csv
+    description: "Khoản vay ở tổ chức tín dụng khác, báo cáo qua credit bureau. Nhiều dòng / hồ sơ."
+    primary_key: [SK_ID_BUREAU]
+    min_rows: 1
+    foreign_keys:
+      - {column: SK_ID_CURR, references: [application_train.SK_ID_CURR, application_test.SK_ID_CURR], severity: warn}
+    columns:
+      SK_ID_BUREAU: {dtype: integer, role: key, nullable: false}
+      SK_ID_CURR: {dtype: integer, role: key, nullable: false}
+      CREDIT_ACTIVE: {dtype: string, allowed_values: [Closed, Active, Sold, "Bad debt"], severity: warn}
+      DAYS_CREDIT: {dtype: integer, role: relative_date, max: 0, severity: warn}
+
+  bureau_balance:
+    file: bureau_balance.csv
+    description: "Trạng thái hằng tháng của khoản vay bureau."
+    primary_key: [SK_ID_BUREAU, MONTHS_BALANCE]
+    primary_key_severity: warn
+    min_rows: 1
+    columns:
+      SK_ID_BUREAU: {dtype: integer, role: key, nullable: false}
+      MONTHS_BALANCE: {dtype: integer, role: relative_date, nullable: false, max: 0, severity: warn}
+      STATUS: {dtype: string, allowed_values: [C, X, "0", "1", "2", "3", "4", "5"], severity: warn}
+
+  previous_application:
+    file: previous_application.csv
+    description: "Các lần nộp hồ sơ trước tại Home Credit và kết quả xét duyệt."
+    primary_key: [SK_ID_PREV]
+    min_rows: 1
+    columns:
+      SK_ID_PREV: {dtype: integer, role: key, nullable: false}
+      SK_ID_CURR: {dtype: integer, role: key, nullable: false}
+      NAME_CONTRACT_STATUS: {dtype: string, allowed_values: [Approved, Refused, Canceled, "Unused offer"], severity: warn}
+      DAYS_DECISION: {dtype: integer, role: relative_date, max: 0, severity: warn}
+
+  pos_cash_balance:
+    file: POS_CASH_balance.csv
+    description: "Số dư hằng tháng của khoản POS / cash loan trước đó."
+    primary_key: [SK_ID_PREV, MONTHS_BALANCE]
+    primary_key_severity: warn
+    min_rows: 1
+    columns:
+      SK_ID_PREV: {dtype: integer, role: key, nullable: false}
+      SK_ID_CURR: {dtype: integer, role: key, nullable: false}
+      MONTHS_BALANCE: {dtype: integer, role: relative_date, nullable: false, max: 0, severity: warn}
+
+  credit_card_balance:
+    file: credit_card_balance.csv
+    description: "Số dư hằng tháng của thẻ tín dụng trước đó."
+    primary_key: [SK_ID_PREV, MONTHS_BALANCE]
+    primary_key_severity: warn
+    min_rows: 1
+    columns:
+      SK_ID_PREV: {dtype: integer, role: key, nullable: false}
+      SK_ID_CURR: {dtype: integer, role: key, nullable: false}
+      MONTHS_BALANCE: {dtype: integer, role: relative_date, nullable: false, max: 0, severity: warn}
+
+  installments_payments:
+    file: installments_payments.csv
+    description: "Lịch trả theo kế hoạch so với thực tế. Không có khoá duy nhất: một kỳ có thể trả nhiều lần."
+    min_rows: 1
+    columns:
+      SK_ID_PREV: {dtype: integer, role: key, nullable: false}
+      SK_ID_CURR: {dtype: integer, role: key, nullable: false}
+      NUM_INSTALMENT_NUMBER: {dtype: integer}
+      DAYS_INSTALMENT: {dtype: number, role: relative_date}
+      DAYS_ENTRY_PAYMENT: {dtype: number, role: relative_date}
+      AMT_INSTALMENT: {dtype: number, min: 0, severity: warn}
+      AMT_PAYMENT: {dtype: number, min: 0, severity: warn}
