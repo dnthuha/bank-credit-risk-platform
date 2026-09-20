@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 
-CONFIG_FILES = ("definitions", "model_dev", "validation", "ews")
+CONFIG_FILES = ("definitions", "model_dev", "validation", "ews", "feature_availability")
 
 
 class ConfigError(ValueError):
@@ -23,6 +23,7 @@ class ProjectConfig:
     model_dev: dict[str, Any]
     validation: dict[str, Any]
     ews: dict[str, Any]
+    feature_availability: dict[str, Any]
     contracts: dict[str, dict[str, Any]]
     hash: str
 

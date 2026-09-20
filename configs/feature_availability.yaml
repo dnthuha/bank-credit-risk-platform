@@ -1,0 +1,169 @@
+# =====================================================================
+# FEATURE AVAILABILITY MATRIX — mỗi cột có mặt từ thời điểm nào.
+# Đây là control chính chống data leakage (overview, mục 2.2 và bảng rủi ro):
+# "lập bảng thời điểm sẵn có cho từng biến TRƯỚC khi làm mô hình".
+#
+# Lớp availability:
+#   at_application  đã biết tại thời điểm nộp đơn -> dùng được
+#   historical      lịch sử TRƯỚC ngày nộp đơn -> dùng được sau khi gộp về cấp hồ sơ
+#   post_decision   chỉ tồn tại sau khi duyệt hoặc sau khi có kết quả -> KHÔNG được dùng
+#   identifier      khoá, chỉ dùng để join
+#   target          nhãn
+#
+# use: mặc định true cho at_application và historical, false cho ba lớp còn lại.
+#      Đặt use: false khi cột có mặt hợp lệ nhưng không nên đưa vào mô hình.
+# caveat: điều phải xử lý ở bước tạo feature.
+# row_filter: điều kiện lọc dòng của cả bảng, áp dụng khi tổng hợp.
+#
+# Thứ tự áp dụng quy tắc: columns > patterns > default. Mọi cột trong dữ liệu đã
+# ingest phải khớp một quy tắc; nếu không, bước features DỪNG. Nhờ vậy một cột mới
+# xuất hiện trong dữ liệu không thể lọt vào mô hình khi chưa ai phân loại nó.
+#
+# Số liệu trong caveat lấy từ docs/data_quality_home_credit.md (dữ liệu 2026-09-18).
+# Ma trận cho Freddie Mac sẽ lập ở Stage 9, khi dựng panel.
+# =====================================================================
+version: 1
+
+home_credit:
+  application_train:
+    grain: "Một hồ sơ vay tại ngày nộp đơn"
+    evidence: >-
+      Mọi cột đều mô tả hồ sơ tại thời điểm nộp đơn. Data contract đã kiểm trên dữ liệu
+      thật: DAYS_BIRTH, DAYS_EMPLOYED, DAYS_REGISTRATION, DAYS_ID_PUBLISH và
+      DAYS_LAST_PHONE_CHANGE đều <= 0, tức không có thông tin tương lai.
+    default: {availability: at_application}
+    columns:
+      SK_ID_CURR: {availability: identifier}
+      TARGET: {availability: target}
+      DAYS_EMPLOYED:
+        availability: at_application
+        caveat: "55,374 dòng (18%) mang sentinel 365243 = hưu trí hoặc thất nghiệp: tách bin riêng, không coi là missing"
+      OWN_CAR_AGE:
+        availability: at_application
+        caveat: "Thiếu ở toàn bộ 202,924 hồ sơ không có ô tô: missing có cấu trúc, cần bin riêng"
+      EXT_SOURCE_1: {availability: at_application, caveat: "Thiếu 56.4%: giữ bin missing riêng"}
+      EXT_SOURCE_3: {availability: at_application, caveat: "Thiếu 19.8%: giữ bin missing riêng"}
+      FLAG_MOBIL:
+        availability: at_application
+        use: false
+        caveat: "Hằng số: 307,510 / 307,511 dòng bằng 1"
+      FLAG_CONT_MOBILE:
+        availability: at_application
+        use: false
+        caveat: "Gần như hằng số: 99.8% dòng bằng 1"
+      WEEKDAY_APPR_PROCESS_START:
+        availability: at_application
+        caveat: "Metadata quy trình xử lý hồ sơ, không phải đặc điểm khách: chỉ giữ nếu có lý do nghiệp vụ"
+      HOUR_APPR_PROCESS_START:
+        availability: at_application
+        caveat: "Metadata quy trình xử lý hồ sơ: chỉ giữ nếu có lý do nghiệp vụ"
+    patterns:
+      - match: "FLAG_DOCUMENT_*"
+        availability: at_application
+        caveat: "14 / 20 cờ giấy tờ gần như hằng số (>99.5% một giá trị): kiểm IV trước khi giữ"
+      - match: "*_AVG"
+        availability: at_application
+        caveat: "Mô tả toà nhà: nhóm 47 cột thiếu 47-70% và trùng lặp giữa AVG / MODE / MEDI; chọn một biến thể"
+      - match: "*_MEDI"
+        availability: at_application
+        caveat: "Mô tả toà nhà: trùng lặp với *_AVG"
+      - match: "*_MODE"
+        availability: at_application
+        caveat: "Mô tả toà nhà: trùng lặp với *_AVG"
+
+  application_test:
+    grain: "Một hồ sơ vay tại ngày nộp đơn, không có nhãn"
+    role: psi_current_sample
+    use_for_features: false   # chỉ dùng làm mẫu hiện tại khi tính PSI (PROJECT_SCOPE, quyết định #1)
+    evidence: "Cùng schema với application_train, chỉ thiếu TARGET."
+    default: {availability: at_application}
+    columns:
+      SK_ID_CURR: {availability: identifier}
+
+  bureau:
+    grain: "Một khoản vay tại tổ chức tín dụng khác"
+    evidence: >-
+      DAYS_CREDIT (mở khoản vay) và DAYS_ENDDATE_FACT (đóng khoản vay) đều <= 0 trên toàn
+      bộ dữ liệu. DAYS_CREDIT_ENDDATE dương là hạn hợp đồng đã biết tại ngày nộp đơn.
+    row_filter: "DAYS_CREDIT_UPDATE IS NULL OR DAYS_CREDIT_UPDATE <= 0"
+    default: {availability: historical}
+    columns:
+      SK_ID_CURR: {availability: identifier}
+      SK_ID_BUREAU: {availability: identifier}
+      DAYS_CREDIT_UPDATE:
+        availability: historical
+        caveat: "17 dòng > 0 = bureau cập nhật SAU ngày nộp đơn (leakage): đã loại bằng row_filter"
+      DAYS_CREDIT_ENDDATE:
+        availability: at_application
+        caveat: "Giá trị dương là hạn hợp đồng, hợp lệ; clip giá trị bất khả thi (nhỏ nhất -42,060)"
+      DAYS_ENDDATE_FACT:
+        availability: historical
+        caveat: "Chỉ có với khoản đã đóng; clip giá trị bất khả thi"
+      AMT_CREDIT_SUM_DEBT:
+        availability: historical
+        caveat: "8,418 dòng âm, có thể là trả dư: kiểm trước khi clip"
+
+  bureau_balance:
+    grain: "Trạng thái một khoản vay bureau trong một tháng"
+    evidence: "MONTHS_BALANCE <= 0 trên toàn bộ dữ liệu."
+    default: {availability: historical}
+    columns:
+      SK_ID_BUREAU:
+        availability: identifier
+        caveat: "Bảng không có SK_ID_CURR: phải join qua bureau; 3,120,184 dòng (11.4%) không khớp bureau và bị loại"
+
+  previous_application:
+    grain: "Một hồ sơ vay trước đó tại Home Credit"
+    evidence: >-
+      DAYS_DECISION <= -1 trên toàn bộ dữ liệu; DAYS_FIRST_DRAWING, DAYS_FIRST_DUE,
+      DAYS_LAST_DUE và DAYS_TERMINATION <= 0 sau khi bỏ sentinel 365243.
+    default: {availability: historical}
+    columns:
+      SK_ID_PREV: {availability: identifier}
+      SK_ID_CURR: {availability: identifier}
+      DAYS_FIRST_DRAWING: {availability: historical, caveat: "Sentinel 365243 ở 934,444 dòng: đổi thành null kèm cờ"}
+      DAYS_FIRST_DUE: {availability: historical, caveat: "Sentinel 365243 ở 40,645 dòng"}
+      DAYS_LAST_DUE: {availability: historical, caveat: "Sentinel 365243 ở 211,221 dòng"}
+      DAYS_TERMINATION: {availability: historical, caveat: "Sentinel 365243 ở 225,913 dòng"}
+      DAYS_LAST_DUE_1ST_VERSION:
+        availability: at_application
+        caveat: "224,392 dòng dương là hạn trả dự kiến theo hợp đồng cũ, hợp lệ; sentinel 365243 ở 93,864 dòng"
+      RATE_INTEREST_PRIMARY: {availability: historical, use: false, caveat: "Thiếu 99.6%"}
+      RATE_INTEREST_PRIVILEGED: {availability: historical, use: false, caveat: "Thiếu 99.6%"}
+
+  pos_cash_balance:
+    grain: "Trạng thái một khoản POS / cash loan cũ trong một tháng"
+    evidence: "MONTHS_BALANCE <= -1 trên toàn bộ dữ liệu."
+    default: {availability: historical}
+    columns:
+      SK_ID_PREV:
+        availability: identifier
+        caveat: "340,561 dòng (3.4%) không có trong previous_application: tổng hợp theo SK_ID_CURR"
+      SK_ID_CURR: {availability: identifier}
+
+  credit_card_balance:
+    grain: "Trạng thái một thẻ tín dụng cũ trong một tháng"
+    evidence: "MONTHS_BALANCE <= -1 trên toàn bộ dữ liệu."
+    default: {availability: historical}
+    columns:
+      SK_ID_PREV:
+        availability: identifier
+        caveat: "1,082,816 dòng (28%) không có trong previous_application: tổng hợp theo SK_ID_CURR"
+      SK_ID_CURR: {availability: identifier}
+      AMT_BALANCE: {availability: historical, caveat: "2,345 dòng âm, có thể là trả dư"}
+
+  installments_payments:
+    grain: "Một lần thanh toán cho một kỳ trả nợ của khoản vay cũ"
+    evidence: "DAYS_INSTALMENT và DAYS_ENTRY_PAYMENT <= -1 trên toàn bộ dữ liệu."
+    default: {availability: historical}
+    columns:
+      SK_ID_PREV:
+        availability: identifier
+        caveat: "1,250,826 dòng (9.2%) không có trong previous_application: tổng hợp theo SK_ID_CURR"
+      SK_ID_CURR: {availability: identifier}
+      DAYS_ENTRY_PAYMENT:
+        availability: historical
+        caveat: "2,905 dòng thiếu cùng AMT_PAYMENT = không có bản ghi thanh toán: gắn cờ, không điền 0"
+      AMT_PAYMENT:
+        availability: historical
+        caveat: "2,905 dòng thiếu cùng DAYS_ENTRY_PAYMENT: gắn cờ, không điền 0"

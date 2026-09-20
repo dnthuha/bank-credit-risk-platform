@@ -16,6 +16,12 @@ from credit_risk.data.contracts import parse_contract
 from credit_risk.data.db import connect, sql_ident, sql_str
 from credit_risk.data.ingest import RawDataError, ingest_source, processed_path
 from credit_risk.data.validate import validate_source
+from credit_risk.features.availability import (
+    AvailabilityError,
+    availability_frame,
+    availability_markdown,
+    parse_availability,
+)
 from credit_risk.features.split import SplitError, SplitSpec, assign_splits, split_summary
 from credit_risk.lineage import RunContext, new_run, write_manifest
 from credit_risk.settings import Settings, load_settings
@@ -93,6 +99,7 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
     (summary_dir / "splits_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+    n_features = _write_availability_matrix(ctx, contract, con, summary_dir)
     for row in summary["splits"]:
         log.info("  split %-12s %7d rows (%.1f%%)%s", row["split"], row["rows"], 100 * row["share"],
                  f", bad rate {row['bad_rate']:.4f}" if row.get("bad_rate") is not None else "")
@@ -101,9 +108,40 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
         "features",
         "ok",
         f"split assigned for {len(splits):,} ids (seed {spec.seed}, fingerprint {summary['fingerprint'][:12]}); "
-        "binning and WoE still to come",
-        [out_path.relative_to(ctx.settings.data_dir).as_posix(), "features/splits_summary.json"],
+        f"{n_features} columns classified as usable features; binning and WoE still to come",
+        [
+            out_path.relative_to(ctx.settings.data_dir).as_posix(),
+            "features/splits_summary.json",
+            "features/feature_availability.md",
+            "features/feature_availability.csv",
+        ],
     )
+
+
+def _write_availability_matrix(ctx: RunContext, contract, con, out_dir) -> int:
+    """Classify every column of every ingested table; an unclassified column stops the step."""
+    columns_by_table = {}
+    for name, table in contract.tables.items():
+        path = processed_path(contract, table, ctx.settings)
+        if not path.exists():
+            raise StepFailed(f"{path.name} not found - run ingest first")
+        described = con.execute(f"DESCRIBE SELECT * FROM read_parquet({sql_str(path)})").fetchall()
+        columns_by_table[name] = [row[0] for row in described]
+
+    try:
+        matrix = parse_availability(ctx.config.feature_availability, contract.source)
+        frame = availability_frame(matrix, columns_by_table)
+    except AvailabilityError as exc:
+        raise StepFailed(f"feature availability: {exc}") from exc
+
+    frame.to_csv(out_dir / "feature_availability.csv", index=False, encoding="utf-8")
+    (out_dir / "feature_availability.md").write_text(
+        availability_markdown(matrix, frame), encoding="utf-8"
+    )
+    counts = frame["availability"].value_counts().to_dict()
+    log.info("  availability: %s | usable features: %d of %d columns",
+             ", ".join(f"{k} {v}" for k, v in counts.items()), int(frame["use"].sum()), len(frame))
+    return int(frame["use"].sum())
 
 
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:
