@@ -7,14 +7,16 @@ wired from day one.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable, Sequence
 
 from credit_risk.config import ConfigError, check_definitions, load_config
 from credit_risk.data.contracts import parse_contract
-from credit_risk.data.db import connect
-from credit_risk.data.ingest import RawDataError, ingest_source
+from credit_risk.data.db import connect, sql_ident, sql_str
+from credit_risk.data.ingest import RawDataError, ingest_source, processed_path
 from credit_risk.data.validate import validate_source
+from credit_risk.features.split import SplitError, SplitSpec, assign_splits, split_summary
 from credit_risk.lineage import RunContext, new_run, write_manifest
 from credit_risk.settings import Settings, load_settings
 
@@ -60,6 +62,50 @@ def _validate_data(ctx: RunContext, sources: Sequence[str]) -> None:
     ctx.record("validate-data", "ok", "; ".join(summary), outputs)
 
 
+def _features(ctx: RunContext, sources: Sequence[str]) -> None:
+    """Stage 2.1: assign the Home Credit population split, once, for every later step.
+
+    Binning and WoE (stage 2.4) and the mortgage panel (stages 8-9) follow here.
+    """
+    if "home_credit" not in sources:
+        ctx.record("features", "stub", "home_credit not in sources; nothing to build yet")
+        return
+
+    contract = parse_contract(ctx.config.contracts["home_credit"])
+    population_path = processed_path(contract, contract.tables[ctx.config.model_dev["population"]], ctx.settings)
+    if not population_path.exists():
+        raise StepFailed(f"{population_path.name} not found - run ingest first")
+
+    try:
+        spec = SplitSpec.from_config(ctx.config.model_dev)
+        con = connect(ctx.settings)
+        columns = ", ".join(sql_ident(c) for c in [spec.id_column, spec.stratify_on] if c)
+        population = con.execute(f"SELECT {columns} FROM read_parquet({sql_str(population_path)})").df()
+        splits = assign_splits(population, spec)
+    except SplitError as exc:
+        raise StepFailed(f"split: {exc}") from exc
+    out_path = population_path.with_name("splits.parquet")
+    splits.to_parquet(out_path, index=False)
+
+    summary = split_summary(splits, population, spec)
+    summary_dir = ctx.run_dir / "features"
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    (summary_dir / "splits_summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    for row in summary["splits"]:
+        log.info("  split %-12s %7d rows (%.1f%%)%s", row["split"], row["rows"], 100 * row["share"],
+                 f", bad rate {row['bad_rate']:.4f}" if row.get("bad_rate") is not None else "")
+
+    ctx.record(
+        "features",
+        "ok",
+        f"split assigned for {len(splits):,} ids (seed {spec.seed}, fingerprint {summary['fingerprint'][:12]}); "
+        "binning and WoE still to come",
+        [out_path.relative_to(ctx.settings.data_dir).as_posix(), "features/splits_summary.json"],
+    )
+
+
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:
     def run(ctx: RunContext, sources: Sequence[str]) -> None:
         log.info("[stub] %s - not implemented yet (roadmap stage %s)", step, stage)
@@ -71,7 +117,7 @@ def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:
 STEPS: dict[str, Callable[[RunContext, Sequence[str]], None]] = {
     "ingest": _ingest,
     "validate-data": _validate_data,
-    "features": _stub("features", "2 (WoE/IV) and 8-9 (panel)"),
+    "features": _features,
     "train": _stub("train", "3-4"),
     "calibrate": _stub("calibrate", "5"),
     "validate-model": _stub("validate-model", "6"),
