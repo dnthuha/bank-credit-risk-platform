@@ -22,6 +22,7 @@ from credit_risk.features.availability import (
     availability_markdown,
     parse_availability,
 )
+from credit_risk.features.build import build_features
 from credit_risk.features.split import SplitError, SplitSpec, assign_splits, split_summary
 from credit_risk.lineage import RunContext, new_run, write_manifest
 from credit_risk.settings import Settings, load_settings
@@ -99,7 +100,12 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
     (summary_dir / "splits_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    n_features = _write_availability_matrix(ctx, contract, con, summary_dir)
+    matrix, n_classified = _write_availability_matrix(ctx, contract, con, summary_dir)
+
+    features = build_features(contract, matrix, ctx.settings, con)
+    (summary_dir / "features_summary.json").write_text(
+        json.dumps(features, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     for row in summary["splits"]:
         log.info("  split %-12s %7d rows (%.1f%%)%s", row["split"], row["rows"], 100 * row["share"],
                  f", bad rate {row['bad_rate']:.4f}" if row.get("bad_rate") is not None else "")
@@ -108,17 +114,21 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
         "features",
         "ok",
         f"split assigned for {len(splits):,} ids (seed {spec.seed}, fingerprint {summary['fingerprint'][:12]}); "
-        f"{n_features} columns classified as usable features; binning and WoE still to come",
+        f"{n_classified} usable columns in the availability matrix; "
+        f"{features['columns']} column feature table for {features['rows']:,} applicants; "
+        "binning and WoE still to come",
         [
             out_path.relative_to(ctx.settings.data_dir).as_posix(),
+            features["output"],
             "features/splits_summary.json",
+            "features/features_summary.json",
             "features/feature_availability.md",
             "features/feature_availability.csv",
         ],
     )
 
 
-def _write_availability_matrix(ctx: RunContext, contract, con, out_dir) -> int:
+def _write_availability_matrix(ctx: RunContext, contract, con, out_dir):
     """Classify every column of every ingested table; an unclassified column stops the step."""
     columns_by_table = {}
     for name, table in contract.tables.items():
@@ -141,7 +151,7 @@ def _write_availability_matrix(ctx: RunContext, contract, con, out_dir) -> int:
     counts = frame["availability"].value_counts().to_dict()
     log.info("  availability: %s | usable features: %d of %d columns",
              ", ".join(f"{k} {v}" for k, v in counts.items()), int(frame["use"].sum()), len(frame))
-    return int(frame["use"].sum())
+    return matrix, int(frame["use"].sum())
 
 
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:

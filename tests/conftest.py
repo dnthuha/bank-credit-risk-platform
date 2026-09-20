@@ -67,6 +67,8 @@ def write_home_credit_raw(settings: Settings) -> Path:
             "DAYS_REGISTRATION": -10.0 * np.arange(n),
             "DAYS_ID_PUBLISH": -7 * np.arange(n),
             "DAYS_LAST_PHONE_CHANGE": -3.0 * np.arange(n),
+            "AMT_GOODS_PRICE": rng.uniform(1e5, 9e5, n).round(1),
+            "CNT_FAM_MEMBERS": rng.integers(1, 5, n),
         }
     ).to_csv(raw / "application_train.csv", index=False)
 
@@ -92,6 +94,14 @@ def write_home_credit_raw(settings: Settings) -> Path:
             "DAYS_CREDIT": -rng.integers(1, 3000, 60),
             "DAYS_ENDDATE_FACT": np.where(np.arange(60) % 2 == 0, np.nan, -5.0 * np.arange(60)),
             "DAYS_CREDIT_UPDATE": -2 * np.arange(60),
+            "DAYS_CREDIT_ENDDATE": 100.0 - 5.0 * np.arange(60),
+            "CREDIT_TYPE": np.tile(["Consumer credit", "Credit card"], 30),
+            "CREDIT_DAY_OVERDUE": np.where(np.arange(60) % 10 == 0, 12, 0),
+            "CNT_CREDIT_PROLONG": np.where(np.arange(60) % 15 == 0, 1, 0),
+            "AMT_CREDIT_SUM": 10000.0 + 100.0 * np.arange(60),
+            "AMT_CREDIT_SUM_DEBT": 1000.0 + 10.0 * np.arange(60),
+            "AMT_CREDIT_SUM_OVERDUE": np.where(np.arange(60) % 10 == 0, 500.0, 0.0),
+            "AMT_CREDIT_MAX_OVERDUE": np.where(np.arange(60) % 10 == 0, 900.0, 0.0),
         }
     ).to_csv(raw / "bureau.csv", index=False)
 
@@ -115,6 +125,12 @@ def write_home_credit_raw(settings: Settings) -> Path:
             "DAYS_FIRST_DUE": -40.0 - np.arange(30),
             "DAYS_LAST_DUE": np.where(np.arange(30) % 4 == 0, 365243.0, -10.0 - np.arange(30)),
             "DAYS_TERMINATION": np.where(np.arange(30) % 4 == 0, 365243.0, -5.0 - np.arange(30)),
+            "AMT_APPLICATION": 20000.0 + 1000.0 * np.arange(30),
+            "AMT_CREDIT": 19000.0 + 1000.0 * np.arange(30),
+            "AMT_ANNUITY": 900.0 + 10.0 * np.arange(30),
+            "AMT_DOWN_PAYMENT": np.where(np.arange(30) % 3 == 0, 0.0, 1000.0),
+            "RATE_DOWN_PAYMENT": np.where(np.arange(30) % 3 == 0, 0.0, 0.05),
+            "CNT_PAYMENT": np.tile([12.0, 24.0, 36.0], 10),
         }
     ).to_csv(raw / "previous_application.csv", index=False)
 
@@ -125,18 +141,37 @@ def write_home_credit_raw(settings: Settings) -> Path:
             "MONTHS_BALANCE": np.tile([-1, -2], 10),
         }
     )
-    monthly.to_csv(raw / "POS_CASH_balance.csv", index=False)
-    monthly.to_csv(raw / "credit_card_balance.csv", index=False)
+    pos = monthly.copy()
+    pos["NAME_CONTRACT_STATUS"] = np.tile(["Active", "Completed"], 10)
+    pos["CNT_INSTALMENT"] = 24
+    pos["CNT_INSTALMENT_FUTURE"] = np.tile([10.0, 12.0], 10)
+    pos["SK_DPD"] = np.where(np.arange(20) % 5 == 0, 7, 0)
+    pos["SK_DPD_DEF"] = 0
+    pos.to_csv(raw / "POS_CASH_balance.csv", index=False)
+
+    card = monthly.copy()
+    card["NAME_CONTRACT_STATUS"] = "Active"
+    card["AMT_BALANCE"] = 500.0 * np.arange(20)
+    # every second card has a zero limit: utilisation is undefined there
+    card["AMT_CREDIT_LIMIT_ACTUAL"] = np.tile([10000.0, 0.0], 10)
+    card["AMT_DRAWINGS_ATM_CURRENT"] = np.tile([0.0, 200.0], 10)
+    card["AMT_DRAWINGS_CURRENT"] = np.tile([100.0, 200.0], 10)
+    card["AMT_PAYMENT_CURRENT"] = np.tile([300.0, 150.0], 10)
+    card["AMT_INST_MIN_REGULARITY"] = np.tile([150.0, 150.0], 10)
+    card["SK_DPD"] = np.where(np.arange(20) % 7 == 0, 3, 0)
+    card["SK_DPD_DEF"] = 0
+    card.to_csv(raw / "credit_card_balance.csv", index=False)
 
     pd.DataFrame(
         {
             "SK_ID_PREV": np.repeat(prev_ids[:10], 2),
             "SK_ID_CURR": np.repeat(prev_curr[:10], 2),
             "NUM_INSTALMENT_NUMBER": np.tile([1, 2], 10),
+            "NUM_INSTALMENT_VERSION": np.ones(20),
             "DAYS_INSTALMENT": np.tile([-60.0, -30.0], 10),
-            "DAYS_ENTRY_PAYMENT": np.tile([-61.0, -29.0], 10),
+            "DAYS_ENTRY_PAYMENT": np.tile([-61.0, -29.0], 10),   # second payment of each pair is 1 day late
             "AMT_INSTALMENT": np.full(20, 1000.0),
-            "AMT_PAYMENT": np.full(20, 1000.0),
+            "AMT_PAYMENT": np.tile([1000.0, 900.0], 10),          # and 100 short
         }
     ).to_csv(raw / "installments_payments.csv", index=False)
     return raw
