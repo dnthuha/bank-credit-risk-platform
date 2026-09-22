@@ -22,6 +22,7 @@ from credit_risk.features.availability import (
     availability_markdown,
     parse_availability,
 )
+from credit_risk.features.binning import BinningError, BinningSpec, binning_frame, binning_payload, fit_all
 from credit_risk.features.build import build_features
 from credit_risk.features.split import SplitError, SplitSpec, assign_splits, split_summary
 from credit_risk.lineage import RunContext, new_run, write_manifest
@@ -106,6 +107,7 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
     (summary_dir / "features_summary.json").write_text(
         json.dumps(features, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+    binning = _fit_binning(ctx, con, features, out_path, summary["fingerprint"], summary_dir)
     for row in summary["splits"]:
         log.info("  split %-12s %7d rows (%.1f%%)%s", row["split"], row["rows"], 100 * row["share"],
                  f", bad rate {row['bad_rate']:.4f}" if row.get("bad_rate") is not None else "")
@@ -116,16 +118,63 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
         f"split assigned for {len(splits):,} ids (seed {spec.seed}, fingerprint {summary['fingerprint'][:12]}); "
         f"{n_classified} usable columns in the availability matrix; "
         f"{features['columns']} column feature table for {features['rows']:,} applicants; "
-        "binning and WoE still to come",
+        f"{binning['features']} features binned on {binning['rows']:,} train rows "
+        f"({binning['flagged_for_review']} flagged for review, fingerprint {binning['fingerprint'][:12]})",
         [
             out_path.relative_to(ctx.settings.data_dir).as_posix(),
             features["output"],
+            binning["output"],
             "features/splits_summary.json",
             "features/features_summary.json",
             "features/feature_availability.md",
             "features/feature_availability.csv",
+            "features/binning.json",
+            "features/binning_table.csv",
         ],
     )
+
+
+def _fit_binning(ctx: RunContext, con, features: dict, splits_path, split_fingerprint: str, out_dir) -> dict:
+    """Stage 2.4: fit every bin on the train split only, then persist the table for scoring."""
+    try:
+        spec = BinningSpec.from_config(ctx.config.model_dev, ctx.config.definitions)
+    except BinningError as exc:
+        raise StepFailed(f"binning: {exc}") from exc
+
+    features_path = ctx.settings.data_dir / features["output"]
+    train = con.execute(
+        f"SELECT f.* FROM read_parquet({sql_str(features_path)}) f "
+        f"JOIN read_parquet({sql_str(splits_path)}) s USING (SK_ID_CURR) WHERE s.split = 'train'"
+    ).df()
+    try:
+        binnings = fit_all(train, features["feature_columns"], "TARGET", spec)
+    except BinningError as exc:
+        raise StepFailed(f"binning: {exc}") from exc
+
+    payload = binning_payload(binnings, spec, {
+        "run_id": ctx.run_id,
+        "fitted_on": "train",
+        "rows": len(train),
+        "split_fingerprint": split_fingerprint,
+    })
+    text = json.dumps(payload, indent=1, ensure_ascii=False, default=str)
+    stable_path = features_path.with_name("binning.json")
+    stable_path.write_text(text, encoding="utf-8")
+    (out_dir / "binning.json").write_text(text, encoding="utf-8")
+    binning_frame(binnings).to_csv(out_dir / "binning_table.csv", index=False, encoding="utf-8")
+
+    flagged = [name for name, b in binnings.items() if any("review" in note for note in b.notes)]
+    suspicious = [name for name, b in binnings.items()
+                  if b.iv > ctx.config.definitions["metric_thresholds"]["iv"]["leakage_suspect_above"]]
+    log.info("  binning: %d features on %d train rows | %d flagged for review | IV above leakage threshold: %s",
+             len(binnings), len(train), len(flagged), suspicious or "none")
+    return {
+        "features": len(binnings),
+        "rows": len(train),
+        "flagged_for_review": len(flagged),
+        "fingerprint": payload["fingerprint"],
+        "output": stable_path.relative_to(ctx.settings.data_dir).as_posix(),
+    }
 
 
 def _write_availability_matrix(ctx: RunContext, contract, con, out_dir):

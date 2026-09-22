@@ -284,7 +284,16 @@ def build_features(
 
     out_path = processed_path(contract, contract.tables["application_train"], settings).with_name(FEATURES_FILE)
     tmp_path = out_path.with_suffix(".parquet.tmp")
-    con.execute(f"COPY ({query}) TO {sql_str(tmp_path)} (FORMAT parquet, COMPRESSION zstd)")
+    # A parallel SUM / AVG adds doubles in a different order on every run, so the
+    # last bit of an aggregate changes and an applicant sitting on a bin edge can
+    # switch bins. One thread fixes the order: the table is bit-identical every run
+    # (measured: ~50 s instead of ~25 s on the full data).
+    threads = con.execute("SELECT current_setting('threads')").fetchone()[0]
+    con.execute("SET threads TO 1")
+    try:
+        con.execute(f"COPY ({query}) TO {sql_str(tmp_path)} (FORMAT parquet, COMPRESSION zstd)")
+    finally:
+        con.execute(f"SET threads TO {int(threads)}")
     tmp_path.replace(out_path)
 
     rel = f"read_parquet({sql_str(out_path)})"

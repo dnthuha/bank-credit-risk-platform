@@ -135,3 +135,22 @@ def test_summary_reports_coverage_of_every_history_group(built):
     assert set(summary["history_coverage"]) == {"BUR", "BB", "PREV", "POS", "CC", "INS"}
     assert all(0.0 <= share <= 1.0 for share in summary["history_coverage"].values())
     assert summary["columns"] == len(summary["feature_columns"]) + 3  # id, population, target
+
+
+def test_the_build_runs_single_threaded_and_restores_the_setting(settings, project_config):
+    """A parallel SUM changes the last bit of an aggregate between runs; the build
+    pins one thread for the query and must hand the connection back unchanged."""
+    write_home_credit_raw(settings)
+    contract = parse_contract(project_config.contracts["home_credit"])
+    matrix = parse_availability(project_config.feature_availability, "home_credit")
+    con = connect(settings)
+    ingest_source(contract, settings, con, "test")
+    con.execute("SET threads TO 2")
+    build_features(contract, matrix, settings, con)
+    first = pd.read_parquet(settings.processed_dir / "home_credit" / "features.parquet")
+    assert int(con.execute("SELECT current_setting('threads')").fetchone()[0]) == 2
+
+    build_features(contract, matrix, settings, con)
+    again = pd.read_parquet(settings.processed_dir / "home_credit" / "features.parquet")
+    pd.testing.assert_frame_equal(first.sort_values("SK_ID_CURR").reset_index(drop=True),
+                                  again.sort_values("SK_ID_CURR").reset_index(drop=True))

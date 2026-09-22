@@ -27,6 +27,27 @@ class WoETable:
         return dict(zip(self.table["bin"], self.table["woe"]))
 
 
+def woe_from_counts(n_good, n_bad, zero_count_adjustment: float = 0.5):
+    """WoE and IV contribution per bin, from good / bad counts.
+
+    If any bin has zero goods or zero bads, `zero_count_adjustment` is added to
+    the good and bad counts of every bin, so WoE stays finite and all bins are
+    treated alike. Returns (woe, iv_contribution, pct_good, pct_bad, adjusted).
+    """
+    good = np.asarray(n_good, dtype=float)
+    bad = np.asarray(n_bad, dtype=float)
+    if good.sum() == 0 or bad.sum() == 0:
+        raise ValueError("WoE needs both goods and bads in the sample")
+    adjusted = bool(((good == 0) | (bad == 0)).any())
+    if adjusted:
+        good = good + zero_count_adjustment
+        bad = bad + zero_count_adjustment
+    pct_good = good / good.sum()
+    pct_bad = bad / bad.sum()
+    woe = np.log(pct_good / pct_bad)
+    return woe, (pct_good - pct_bad) * woe, pct_good, pct_bad, adjusted
+
+
 def _bin_labels(bins) -> pd.Series:
     s = pd.Series(bins, dtype="object")
     return s.where(s.notna(), MISSING_BIN)
@@ -52,20 +73,9 @@ def woe_iv_table(bins, y, zero_count_adjustment: float = 0.5) -> WoETable:
         .agg(n="size", n_bad="sum")
     )
     grouped["n_good"] = grouped["n"] - grouped["n_bad"]
-    good = grouped["n_good"].astype(float)
-    bad = grouped["n_bad"].astype(float)
-    if good.sum() == 0 or bad.sum() == 0:
-        raise ValueError("WoE needs both goods and bads in the sample")
-
-    adjusted = bool(((good == 0) | (bad == 0)).any())
-    if adjusted:
-        good = good + zero_count_adjustment
-        bad = bad + zero_count_adjustment
-
-    pct_good = good / good.sum()
-    pct_bad = bad / bad.sum()
-    woe = np.log(pct_good / pct_bad)
-    iv_contribution = (pct_good - pct_bad) * woe
+    woe, iv_contribution, pct_good, pct_bad, adjusted = woe_from_counts(
+        grouped["n_good"], grouped["n_bad"], zero_count_adjustment
+    )
 
     table = pd.DataFrame(
         {
@@ -74,10 +84,10 @@ def woe_iv_table(bins, y, zero_count_adjustment: float = 0.5) -> WoETable:
             "n_good": grouped["n_good"].to_numpy(),
             "n_bad": grouped["n_bad"].to_numpy(),
             "bad_rate": (grouped["n_bad"] / grouped["n"]).to_numpy(),
-            "pct_good": pct_good.to_numpy(),
-            "pct_bad": pct_bad.to_numpy(),
-            "woe": woe.to_numpy(),
-            "iv_contribution": iv_contribution.to_numpy(),
+            "pct_good": pct_good,
+            "pct_bad": pct_bad,
+            "woe": woe,
+            "iv_contribution": iv_contribution,
         }
     )
     return WoETable(table, float(iv_contribution.sum()), adjusted)

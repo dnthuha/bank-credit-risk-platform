@@ -23,6 +23,11 @@ binning:
   prefer_monotonic_trend: true
   missing_as_own_bin: true
   rare_category_share: 0.01
+  # Fit đơn điệu giữ lại dưới tỷ lệ IV này so với 20 pre-bin thì bị gắn cờ để xem lại.
+  review_iv_retention: 0.60
+  # Ngoại lệ cho prefer_monotonic_trend: biến -> lý do nghiệp vụ (bắt buộc).
+  # Chỉ thêm khi hình dạng không đơn điệu có giải thích nghiệp vụ, không phải để tăng IV.
+  allow_non_monotonic: {}
 
 feature_selection:
   iv_min: 0.02                  # tham chiếu definitions.metric_thresholds.iv
