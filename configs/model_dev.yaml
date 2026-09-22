@@ -27,7 +27,20 @@ binning:
   review_iv_retention: 0.60
   # Ngoại lệ cho prefer_monotonic_trend: biến -> lý do nghiệp vụ (bắt buộc).
   # Chỉ thêm khi hình dạng không đơn điệu có giải thích nghiệp vụ, không phải để tăng IV.
-  allow_non_monotonic: {}
+  allow_non_monotonic:
+    AMT_CREDIT: >-
+      Chữ U ngược: bad rate theo decile trên train 6.6% -> 10.5% -> 5.4%, và vẫn giữ khi
+      chỉ xét Cash loans (6.4% -> 10.9% -> 5.5%), nên không chỉ do cơ cấu sản phẩm.
+      Khoản lớn chỉ được duyệt cho khách tốt hơn (thu nhập TB 116k -> 246k, EXT_SOURCE_2
+      0.48 -> 0.57): hiệu ứng chính sách duyệt vay. Kiểm độ ổn định ở 2.5 và tương quan
+      với thu nhập / EXT_SOURCE ở 2.6. (2026-09-22)
+    AMT_ANNUITY: >-
+      Cùng hình dạng và cùng cơ chế với AMT_CREDIT: 7.2% -> 10.1% -> 6.0% trên train,
+      chỉ Cash loans 7.0% -> 10.3% -> 6.1%; thu nhập TB 115k -> 264k theo decile.
+      (2026-09-22)
+    # AMT_GOODS_PRICE KHÔNG đưa vào: "đỉnh" rủi ro là một giá trị tròn duy nhất
+    # (đúng 450,000: 15,613 hồ sơ train, bad rate 13.5%, lân cận 400k-500k chỉ 7.6%).
+    # Đó là một sản phẩm / chiến dịch, không phải quan hệ giá hàng - rủi ro.
 
 feature_selection:
   iv_min: 0.02                  # tham chiếu definitions.metric_thresholds.iv

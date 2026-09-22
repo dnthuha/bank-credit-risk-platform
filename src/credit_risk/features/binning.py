@@ -7,7 +7,8 @@ Numeric features
        neighbour with the closer bad rate.
     3. If `prefer_monotonic_trend`, merge adjacent bins that break the dominant
        trend until the bad rate is monotonic. Features listed in
-       `allow_non_monotonic` - each with a business rationale - keep their shape;
+       `allow_non_monotonic` - each with a business rationale - may turn once
+       (an inverted U or a U, whichever keeps more IV), never zigzag;
        a monotonic fit that keeps less than `review_iv_retention` of the pre-bin
        IV is flagged for exactly that review.
     4. Merge the most similar adjacent pair until at most `max_bins` remain.
@@ -152,6 +153,34 @@ def _enforce_monotonic(seg: _Segments, trend: str) -> None:
         if broken.size == 0:
             return
         seg.merge(int(broken[0]))
+
+
+def _enforce_unimodal(seg: _Segments, adjustment: float) -> str:
+    """One turning point only: an inverted U (peak) or a U (trough).
+
+    Every split point p is tried: bins 0..p are made monotonic one way and the
+    rest the other way, and the candidate keeping the most IV wins (ties go to
+    the earlier p, and to a peak before a trough). Merging never crosses p, so
+    each side stays a run of adjacent bins; the result is unimodal whatever the
+    two sides meet at.
+    """
+    best: tuple[float, _Segments, str] | None = None
+    for shape, left_trend, right_trend in (("inverted_u", "increasing", "decreasing"),
+                                           ("u_shape", "decreasing", "increasing")):
+        for p in range(len(seg)):
+            left = _Segments(seg.n[: p + 1], seg.bad[: p + 1], seg.keys[:p])
+            right = _Segments(seg.n[p + 1:], seg.bad[p + 1:], seg.keys[p + 1:])
+            _enforce_monotonic(left, left_trend)
+            if len(right):
+                _enforce_monotonic(right, right_trend)
+            joint = [seg.keys[p]] if len(right) else []
+            candidate = _Segments(left.n + right.n, left.bad + right.bad, left.keys + joint + right.keys)
+            iv = _iv(candidate.n, candidate.bad, adjustment)
+            if best is None or iv > best[0] + 1e-15:
+                best = (iv, candidate, shape)
+    _, winner, shape = best
+    seg.n, seg.bad, seg.keys = winner.n, winner.bad, winner.keys
+    return shape
 
 
 def _merge_to_max(seg: _Segments, max_bins: int) -> None:
@@ -311,8 +340,9 @@ def fit_numeric(feature: str, values, y, spec: BinningSpec) -> FeatureBinning:
     trend = _trend(seg) if len(seg) > 1 else None
     extra_notes = []
     if feature in spec.allow_non_monotonic:
-        trend = "non_monotonic" if trend else None
-        extra_notes.append(f"monotonic trend not enforced: {spec.allow_non_monotonic[feature]}")
+        if trend:
+            trend = _enforce_unimodal(seg, spec.zero_count_adjustment)
+        extra_notes.append(f"one turning point allowed ({trend}): {spec.allow_non_monotonic[feature]}")
     elif spec.monotonic and trend:
         _enforce_monotonic(seg, trend)
     _merge_to_max(seg, spec.max_bins)
@@ -323,7 +353,7 @@ def fit_numeric(feature: str, values, y, spec: BinningSpec) -> FeatureBinning:
         for lo, hi in zip(bounds[:-1], bounds[1:])
     ]
     rows, iv, notes = _table(labels, seg.n, seg.bad, spec, n_missing, bad_missing)
-    if trend not in (None, "non_monotonic") and prebin_iv >= 0.02 and iv < spec.review_iv_retention * prebin_iv:
+    if trend in ("increasing", "decreasing") and prebin_iv >= 0.02 and iv < spec.review_iv_retention * prebin_iv:
         extra_notes.append(
             f"monotonic merging kept {iv / prebin_iv:.0%} of the pre-bin IV ({prebin_iv:.4f} -> {iv:.4f}): "
             "review the shape; allow_non_monotonic needs a business rationale"

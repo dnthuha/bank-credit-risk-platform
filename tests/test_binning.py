@@ -119,9 +119,22 @@ def test_an_allowed_exception_keeps_its_shape_and_its_rationale():
     x, y = inverted_u()
     monotonic = fit_numeric("x", x, y, BinningSpec.from_config(MODEL_DEV, DEFINITIONS))
     shaped = fit_numeric("x", x, y, spec)
-    assert shaped.trend == "non_monotonic"
+    assert shaped.trend == "inverted_u"
     assert shaped.iv > 2 * monotonic.iv
     assert any("mid-size loans are riskiest" in note for note in shaped.notes)
+    # One turning point only: the bad rate rises, then falls - never zigzags.
+    steps = np.sign(np.diff([r["bad_rate"] for r in non_missing(shaped)]))
+    steps = steps[steps != 0]
+    assert np.count_nonzero(np.diff(steps)) == 1
+
+
+def test_an_allowed_exception_can_also_be_a_u_shape():
+    spec = BinningSpec.from_config(
+        {"binning": {**MODEL_DEV["binning"], "allow_non_monotonic": {"x": "extremes are riskier"}}}, DEFINITIONS)
+    rng = np.random.default_rng(4)
+    x = rng.uniform(-1, 1, 30000)
+    y = (rng.random(30000) < 0.02 + 0.2 * x ** 2).astype(int)
+    assert fit_numeric("x", x, y, spec).trend == "u_shape"
 
 
 def test_an_exception_without_a_rationale_is_rejected():
