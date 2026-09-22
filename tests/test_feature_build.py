@@ -139,23 +139,30 @@ def test_summary_reports_coverage_of_every_history_group(built):
     assert summary["columns"] == len(summary["feature_columns"]) + 3  # id, population, target
 
 
-def test_the_build_runs_single_threaded_and_restores_the_setting(settings, project_config):
-    """A parallel SUM changes the last bit of an aggregate between runs; the build
-    pins one thread for the query and must hand the connection back unchanged."""
+def test_the_build_does_not_depend_on_row_order_or_thread_count(settings, project_config):
+    """A float SUM / AVG changes in its last bit with the order rows are added in.
+    The build aggregates in exact decimals, so shuffling every history table and
+    changing the thread count must give a bit-identical feature table."""
     write_home_credit_raw(settings)
     contract = parse_contract(project_config.contracts["home_credit"])
     matrix = parse_availability(project_config.feature_availability, "home_credit")
     con = connect(settings)
     ingest_source(contract, settings, con, "test")
-    con.execute("SET threads TO 2")
-    build_features(contract, matrix, settings, con)
-    first = pd.read_parquet(settings.processed_dir / "home_credit" / "features.parquet")
-    assert int(con.execute("SELECT current_setting('threads')").fetchone()[0]) == 2
+    out = settings.processed_dir / "home_credit" / "features.parquet"
 
+    con.execute("SET threads TO 4")
     build_features(contract, matrix, settings, con)
-    again = pd.read_parquet(settings.processed_dir / "home_credit" / "features.parquet")
-    pd.testing.assert_frame_equal(first.sort_values("SK_ID_CURR").reset_index(drop=True),
-                                  again.sort_values("SK_ID_CURR").reset_index(drop=True))
+    first = pd.read_parquet(out).sort_values("SK_ID_CURR").reset_index(drop=True)
+
+    for table in ["bureau", "previous_application", "pos_cash_balance", "credit_card_balance",
+                  "installments_payments"]:
+        path = processed_path(contract, contract.tables[table], settings)
+        pd.read_parquet(path).sample(frac=1, random_state=7).to_parquet(path, index=False)
+    con.execute("SET threads TO 1")
+    build_features(contract, matrix, settings, con)
+    again = pd.read_parquet(out).sort_values("SK_ID_CURR").reset_index(drop=True)
+
+    pd.testing.assert_frame_equal(first, again, check_exact=True)
 
 
 def test_a_history_table_excluded_by_the_matrix_yields_no_feature(built):

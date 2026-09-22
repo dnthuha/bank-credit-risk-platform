@@ -42,6 +42,25 @@ def _rel(contract: SourceContract, table: str, settings: Settings) -> str:
     return f"read_parquet({sql_str(processed_path(contract, contract.tables[table], settings))})"
 
 
+# Floating-point SUM / AVG depend on the order the rows are added in: a different
+# row order after a re-ingest, or a parallel plan, moves the last bit and can push
+# an applicant across a bin edge. Summing in exact fixed-point arithmetic (DECIMAL
+# with 10 decimals, i.e. integer additions) gives the same result in any order,
+# with any number of threads. Counts, MIN / MAX and averages of 0/1 flags are
+# exact already and stay as they are.
+_EXACT = "DECIMAL(38, 10)"
+
+
+def _xsum(expr: str, where: str | None = None) -> str:
+    flt = f" FILTER (WHERE {where})" if where else ""
+    return f"CAST(SUM(CAST(({expr}) AS {_EXACT})){flt} AS DOUBLE)"
+
+
+def _xavg(expr: str, where: str | None = None) -> str:
+    flt = f" FILTER (WHERE {where})" if where else ""
+    return f"CAST(AVG(CAST(({expr}) AS {_EXACT})){flt} AS DOUBLE)"
+
+
 def _application_sql(contract: SourceContract, matrix: AvailabilityMatrix, settings: Settings,
                      con: duckdb.DuckDBPyConnection) -> str:
     """Application columns the matrix allows, plus a few standard ratios."""
@@ -95,13 +114,13 @@ def _bureau_sql(contract: SourceContract, matrix: AvailabilityMatrix, settings: 
         COUNT(DISTINCT CREDIT_TYPE) AS BUR_CREDIT_TYPES,
         MAX(DAYS_CREDIT) AS BUR_DAYS_CREDIT_MAX,          -- most recent bureau loan
         MIN(DAYS_CREDIT) AS BUR_DAYS_CREDIT_MIN,          -- oldest: length of credit history
-        AVG(DAYS_CREDIT) AS BUR_DAYS_CREDIT_MEAN,
+        {_xavg('DAYS_CREDIT')} AS BUR_DAYS_CREDIT_MEAN,
         MAX(DAYS_ENDDATE_FACT) AS BUR_DAYS_ENDDATE_FACT_MAX,
-        SUM(AMT_CREDIT_SUM) AS BUR_AMT_SUM,
+        {_xsum('AMT_CREDIT_SUM')} AS BUR_AMT_SUM,
         MAX(AMT_CREDIT_SUM) AS BUR_AMT_MAX,
-        SUM(AMT_CREDIT_SUM_DEBT) AS BUR_DEBT_SUM,
-        SUM(AMT_CREDIT_SUM_DEBT) / NULLIF(SUM(AMT_CREDIT_SUM), 0) AS BUR_DEBT_TO_CREDIT,
-        SUM(AMT_CREDIT_SUM_OVERDUE) AS BUR_OVERDUE_SUM,
+        {_xsum('AMT_CREDIT_SUM_DEBT')} AS BUR_DEBT_SUM,
+        {_xsum('AMT_CREDIT_SUM_DEBT')} / NULLIF({_xsum('AMT_CREDIT_SUM')}, 0) AS BUR_DEBT_TO_CREDIT,
+        {_xsum('AMT_CREDIT_SUM_OVERDUE')} AS BUR_OVERDUE_SUM,
         MAX(AMT_CREDIT_MAX_OVERDUE) AS BUR_MAX_OVERDUE,
         MAX(CREDIT_DAY_OVERDUE) AS BUR_DAY_OVERDUE_MAX,
         AVG((CREDIT_DAY_OVERDUE > 0)::INT) AS BUR_OVERDUE_RATE,
@@ -158,13 +177,13 @@ def _previous_application_sql(contract: SourceContract, settings: Settings) -> s
         AVG((NAME_CONTRACT_STATUS = 'Canceled')::INT) AS PREV_CANCELED_RATE,
         MAX(DAYS_DECISION) AS PREV_DAYS_DECISION_MAX,       -- most recent application
         MIN(DAYS_DECISION) AS PREV_DAYS_DECISION_MIN,
-        AVG(AMT_CREDIT) AS PREV_AMT_CREDIT_MEAN,
+        {_xavg('AMT_CREDIT')} AS PREV_AMT_CREDIT_MEAN,
         MAX(AMT_CREDIT) AS PREV_AMT_CREDIT_MAX,
-        SUM(AMT_CREDIT) AS PREV_AMT_CREDIT_SUM,
-        AVG(AMT_CREDIT / NULLIF(AMT_APPLICATION, 0)) AS PREV_CREDIT_TO_APPLICATION,
-        AVG(AMT_ANNUITY) AS PREV_AMT_ANNUITY_MEAN,
-        AVG(RATE_DOWN_PAYMENT) AS PREV_DOWN_PAYMENT_RATE_MEAN,
-        AVG(CNT_PAYMENT) AS PREV_CNT_PAYMENT_MEAN,
+        {_xsum('AMT_CREDIT')} AS PREV_AMT_CREDIT_SUM,
+        {_xavg('AMT_CREDIT / NULLIF(AMT_APPLICATION, 0)')} AS PREV_CREDIT_TO_APPLICATION,
+        {_xavg('AMT_ANNUITY')} AS PREV_AMT_ANNUITY_MEAN,
+        {_xavg('RATE_DOWN_PAYMENT')} AS PREV_DOWN_PAYMENT_RATE_MEAN,
+        {_xavg('CNT_PAYMENT')} AS PREV_CNT_PAYMENT_MEAN,
         MAX(DAYS_TERMINATION) AS PREV_DAYS_TERMINATION_MAX,
         AVG(TERMINATION_UNKNOWN) AS PREV_TERMINATION_UNKNOWN_RATE
     FROM p GROUP BY SK_ID_CURR
@@ -182,7 +201,7 @@ def _pos_cash_sql(contract: SourceContract, settings: Settings) -> str:
         MAX(SK_DPD) AS POS_SK_DPD_MAX,
         AVG((SK_DPD > 0)::INT) AS POS_DPD_MONTH_RATE,
         COUNT(*) FILTER (WHERE SK_DPD > 0 AND MONTHS_BALANCE >= -{RECENT_MONTHS}) AS POS_DPD_MONTHS_12M,
-        AVG(CNT_INSTALMENT_FUTURE) AS POS_INSTALMENTS_LEFT_MEAN,
+        {_xavg('CNT_INSTALMENT_FUTURE')} AS POS_INSTALMENTS_LEFT_MEAN,
         AVG((NAME_CONTRACT_STATUS = 'Active')::INT) AS POS_ACTIVE_MONTH_RATE
     FROM {_rel(contract, 'pos_cash_balance', settings)} GROUP BY SK_ID_CURR
     """
@@ -203,11 +222,11 @@ def _credit_card_sql(contract: SourceContract, settings: Settings) -> str:
         SK_ID_CURR,
         COUNT(*) AS CC_MONTHS,
         COUNT(DISTINCT SK_ID_PREV) AS CC_CARDS,
-        AVG(UTILISATION) AS CC_UTILISATION_MEAN,
+        {_xavg('UTILISATION')} AS CC_UTILISATION_MEAN,
         MAX(UTILISATION) AS CC_UTILISATION_MAX,
-        AVG(UTILISATION) FILTER (WHERE MONTHS_BALANCE >= -{RECENT_MONTHS}) AS CC_UTILISATION_MEAN_12M,
-        AVG(AMT_DRAWINGS_ATM_CURRENT) AS CC_ATM_DRAWINGS_MEAN,
-        AVG(AMT_PAYMENT_CURRENT / NULLIF(AMT_INST_MIN_REGULARITY, 0)) AS CC_PAYMENT_TO_MINIMUM_MEAN,
+        {_xavg('UTILISATION', f'MONTHS_BALANCE >= -{RECENT_MONTHS}')} AS CC_UTILISATION_MEAN_12M,
+        {_xavg('AMT_DRAWINGS_ATM_CURRENT')} AS CC_ATM_DRAWINGS_MEAN,
+        {_xavg('AMT_PAYMENT_CURRENT / NULLIF(AMT_INST_MIN_REGULARITY, 0)')} AS CC_PAYMENT_TO_MINIMUM_MEAN,
         MAX(SK_DPD) AS CC_SK_DPD_MAX,
         AVG((SK_DPD > 0)::INT) AS CC_DPD_MONTH_RATE,
         COUNT(*) FILTER (WHERE SK_DPD > 0 AND MONTHS_BALANCE >= -{RECENT_MONTHS}) AS CC_DPD_MONTHS_12M
@@ -233,14 +252,14 @@ def _installments_sql(contract: SourceContract, settings: Settings) -> str:
         SK_ID_CURR,
         COUNT(*) AS INS_COUNT,
         SUM(NO_PAYMENT_RECORD) AS INS_NO_PAYMENT_RECORD,
-        AVG(DAYS_LATE) AS INS_DAYS_LATE_MEAN,
+        {_xavg('DAYS_LATE')} AS INS_DAYS_LATE_MEAN,
         MAX(DAYS_LATE) AS INS_DAYS_LATE_MAX,
         AVG((DAYS_LATE > 0)::INT) AS INS_LATE_RATE,
         AVG((DAYS_LATE > 0)::INT) FILTER (WHERE DAYS_INSTALMENT >= -{RECENT_DAYS}) AS INS_LATE_RATE_12M,
         AVG((AMT_SHORT > 0.01)::INT) AS INS_UNDERPAY_RATE,
-        SUM(AMT_SHORT) AS INS_AMT_SHORT_SUM,
-        AVG(AMT_PAYMENT / NULLIF(AMT_INSTALMENT, 0)) AS INS_PAYMENT_RATIO_MEAN,
-        SUM(AMT_PAYMENT) AS INS_AMT_PAID_SUM
+        {_xsum('AMT_SHORT')} AS INS_AMT_SHORT_SUM,
+        {_xavg('AMT_PAYMENT / NULLIF(AMT_INSTALMENT, 0)')} AS INS_PAYMENT_RATIO_MEAN,
+        {_xsum('AMT_PAYMENT')} AS INS_AMT_PAID_SUM
     FROM i GROUP BY SK_ID_CURR
     """
 
@@ -289,16 +308,8 @@ def build_features(
 
     out_path = processed_path(contract, contract.tables["application_train"], settings).with_name(FEATURES_FILE)
     tmp_path = out_path.with_suffix(".parquet.tmp")
-    # A parallel SUM / AVG adds doubles in a different order on every run, so the
-    # last bit of an aggregate changes and an applicant sitting on a bin edge can
-    # switch bins. One thread fixes the order: the table is bit-identical every run
-    # (measured: ~50 s instead of ~25 s on the full data).
-    threads = con.execute("SELECT current_setting('threads')").fetchone()[0]
-    con.execute("SET threads TO 1")
-    try:
-        con.execute(f"COPY ({query}) TO {sql_str(tmp_path)} (FORMAT parquet, COMPRESSION zstd)")
-    finally:
-        con.execute(f"SET threads TO {int(threads)}")
+    # Bit-identical on every run, in parallel: see _xsum / _xavg.
+    con.execute(f"COPY ({query}) TO {sql_str(tmp_path)} (FORMAT parquet, COMPRESSION zstd)")
     tmp_path.replace(out_path)
 
     rel = f"read_parquet({sql_str(out_path)})"
