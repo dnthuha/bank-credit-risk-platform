@@ -17,7 +17,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 | Chặng | Nội dung | Trạng thái |
 |---|---|---|
 | 1 | Nền móng: repo, môi trường, data contract, định nghĩa, ingest, data validation, test lõi | Dữ liệu thật đã qua validate: Home Credit (135 check, 0 error), Freddie Mac 2012-2025 (0 error) |
-| 2 | WoE / IV, binning, rà soát leakage | Đang làm: split, availability matrix, bảng feature, binning, báo cáo IV và độ ổn định (2.1-2.5) đã xong |
+| 2 | WoE / IV, binning, rà soát leakage | Đang làm: 2.1-2.6 đã xong (split, availability matrix, bảng feature, binning, báo cáo IV, shortlist 45 biến); còn 2.7 |
 | 3 | Scorecard | |
 | 4 | LightGBM challenger | |
 | 5 | Calibration, đóng băng model | |
@@ -56,7 +56,7 @@ python -m credit_risk run --source freddie_mac             # chỉ một nguồn
 |---|---|---|---|
 | 1 | `ingest` | CSV / TXT thô → parquet đúng kiểu | `data/processed/<source>/*.parquet` |
 | 2 | `validate-data` | Kiểm tra theo data contract; rule `error` fail thì dừng | `artifacts/<run_id>/data_validation/` |
-| 3 | `features` | Split, availability matrix, bảng feature cấp hồ sơ, binning + WoE fit trên train (M1); panel + biến trễ (M3) còn lại | `data/processed/home_credit/{splits,features}.parquet`, `binning.json`, `artifacts/<run_id>/features/` |
+| 3 | `features` | Split, availability matrix, bảng feature cấp hồ sơ, binning + WoE fit trên train, báo cáo IV, shortlist (M1); panel + biến trễ (M3) còn lại | `data/processed/home_credit/{splits,features}.parquet`, `binning.json`, `shortlist.json`, `artifacts/<run_id>/features/` |
 | 4 | `train` | Scorecard + LightGBM | *stub, chặng 3-4* |
 | 5 | `calibrate` | Platt / isotonic trên calibration sample | *stub, chặng 5* |
 | 6 | `validate-model` | Tính lại độc lập AUC/Gini/KS, PSI, bootstrap | *stub, chặng 6* |
@@ -81,7 +81,7 @@ bank-credit-risk-platform/
 ├── docs/                         # data quality, phát hiện từ dữ liệu thật
 ├── src/credit_risk/
 │   ├── data/                     # contracts, ingest, validate (DuckDB)
-│   ├── features/                 # split.py, availability.py, build.py, binning.py, iv_report.py, woe.py
+│   ├── features/                 # split.py, availability.py, build.py, binning.py, iv_report.py, selection.py, woe.py
 │   ├── models/
 │   ├── validation/               # metrics.py: AUC, Gini, KS, Brier, PSI
 │   ├── monitoring/               # buckets.py, transitions.py (roll rate)

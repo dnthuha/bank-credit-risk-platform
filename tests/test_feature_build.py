@@ -132,7 +132,9 @@ def test_installment_behaviour_matches_an_independent_recomputation(built, setti
 
 def test_summary_reports_coverage_of_every_history_group(built):
     _, summary, _ = built
-    assert set(summary["history_coverage"]) == {"BUR", "BB", "PREV", "POS", "CC", "INS"}
+    # bureau_balance is use_for_features: false in the committed availability matrix
+    assert set(summary["history_coverage"]) == {"BUR", "PREV", "POS", "CC", "INS"}
+    assert summary["history_tables_excluded"] == ["bureau_balance"]
     assert all(0.0 <= share <= 1.0 for share in summary["history_coverage"].values())
     assert summary["columns"] == len(summary["feature_columns"]) + 3  # id, population, target
 
@@ -154,3 +156,9 @@ def test_the_build_runs_single_threaded_and_restores_the_setting(settings, proje
     again = pd.read_parquet(settings.processed_dir / "home_credit" / "features.parquet")
     pd.testing.assert_frame_equal(first.sort_values("SK_ID_CURR").reset_index(drop=True),
                                   again.sort_values("SK_ID_CURR").reset_index(drop=True))
+
+
+def test_a_history_table_excluded_by_the_matrix_yields_no_feature(built):
+    frame, summary, _ = built
+    assert not [c for c in frame.columns if c.startswith("BB_")]
+    assert "HAS_BB_HISTORY" not in frame.columns

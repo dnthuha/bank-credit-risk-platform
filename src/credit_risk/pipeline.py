@@ -25,6 +25,13 @@ from credit_risk.features.availability import (
 from credit_risk.features.binning import BinningError, BinningSpec, binning_frame, binning_payload, fit_all
 from credit_risk.features.build import build_features
 from credit_risk.features.iv_report import ReportThresholds, iv_report, iv_report_markdown
+from credit_risk.features.selection import (
+    SelectionError,
+    SelectionSpec,
+    select_features,
+    shortlist_markdown,
+    shortlist_payload,
+)
 from credit_risk.features.split import SplitError, SplitSpec, assign_splits, split_summary
 from credit_risk.lineage import RunContext, new_run, write_manifest
 from credit_risk.settings import Settings, load_settings
@@ -74,7 +81,7 @@ def _validate_data(ctx: RunContext, sources: Sequence[str]) -> None:
 def _features(ctx: RunContext, sources: Sequence[str]) -> None:
     """Stage 2 for Home Credit, in order: population split (2.1), availability
     matrix (2.2), applicant-level feature table (2.3), binning fitted on train
-    (2.4), out-of-sample IV and stability report (2.5).
+    (2.4), out-of-sample IV and stability report (2.5), feature shortlist (2.6).
 
     The mortgage panel (stages 8-9) will join this step later.
     """
@@ -112,6 +119,7 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
     )
     binnings, binning = _fit_binning(ctx, con, features, out_path, summary["fingerprint"], summary_dir)
     report = _write_iv_report(ctx, con, features, out_path, binnings, binning, summary_dir)
+    shortlist = _select_features(ctx, con, features, out_path, binnings, binning, report, summary_dir)
     for row in summary["splits"]:
         log.info("  split %-12s %7d rows (%.1f%%)%s", row["split"], row["rows"], 100 * row["share"],
                  f", bad rate {row['bad_rate']:.4f}" if row.get("bad_rate") is not None else "")
@@ -125,7 +133,7 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
         f"{binning['features']} features binned on {binning['rows']:,} train rows "
         f"({binning['flagged_for_review']} flagged for review, fingerprint {binning['fingerprint'][:12]}); "
         f"{report['useful']} features with IV >= {report['iv_min']} on train, {report['flagged']} of them flagged "
-        "out of sample",
+        f"out of sample; shortlist of {shortlist['selected']} features (fingerprint {shortlist['fingerprint'][:12]})",
         [
             out_path.relative_to(ctx.settings.data_dir).as_posix(),
             features["output"],
@@ -139,6 +147,10 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
             "features/iv_report.md",
             "features/iv_report.csv",
             "features/bin_stability.csv",
+            shortlist["output"],
+            "features/shortlist.md",
+            "features/shortlist.csv",
+            "features/shortlist.json",
         ],
     )
 
@@ -210,7 +222,41 @@ def _write_iv_report(ctx: RunContext, con, features: dict, splits_path, binnings
              "median IV kept on validation %.0f%% | PSI vs application_test >= %.2f: %d features",
              len(useful), len(flagged), 100 * useful["iv_retention"].median(),
              th.psi_significant, int((table["psi_current"] >= th.psi_significant).sum()))
-    return {"useful": len(useful), "flagged": len(flagged), "iv_min": th.iv_min}
+    return {"useful": len(useful), "flagged": len(flagged), "iv_min": th.iv_min, "table": table}
+
+
+def _select_features(ctx: RunContext, con, features: dict, splits_path, binnings, binning: dict,
+                     report: dict, out_dir) -> dict:
+    """Stage 2.6: the shortlist, with the step and reason that removed every other feature."""
+    try:
+        spec = SelectionSpec.from_config(ctx.config.model_dev, ctx.config.definitions)
+    except SelectionError as exc:
+        raise StepFailed(f"selection: {exc}") from exc
+
+    features_path = ctx.settings.data_dir / features["output"]
+    train = con.execute(
+        f"SELECT f.* FROM read_parquet({sql_str(features_path)}) f "
+        f"JOIN read_parquet({sql_str(splits_path)}) s USING (SK_ID_CURR) WHERE s.split = 'train'"
+    ).df()
+    decisions = select_features(report["table"], binnings, train, spec)
+
+    meta = {"run_id": ctx.run_id, "rows_train": len(train), "binning_fingerprint": binning["fingerprint"]}
+    payload = shortlist_payload(decisions, spec, meta)
+    text = json.dumps(payload, indent=1, ensure_ascii=False, default=str)
+    stable_path = features_path.with_name("shortlist.json")
+    stable_path.write_text(text, encoding="utf-8")
+    (out_dir / "shortlist.json").write_text(text, encoding="utf-8")
+    decisions.to_csv(out_dir / "shortlist.csv", index=False, encoding="utf-8")
+    (out_dir / "shortlist.md").write_text(shortlist_markdown(decisions, spec, meta), encoding="utf-8")
+
+    counts = decisions["step"].value_counts().to_dict()
+    log.info("  shortlist: %d selected | dropped by %s", counts.get("selected", 0),
+             ", ".join(f"{k} {v}" for k, v in counts.items() if k != "selected"))
+    return {
+        "selected": counts.get("selected", 0),
+        "fingerprint": payload["fingerprint"],
+        "output": stable_path.relative_to(ctx.settings.data_dir).as_posix(),
+    }
 
 
 def _write_availability_matrix(ctx: RunContext, contract, con, out_dir):

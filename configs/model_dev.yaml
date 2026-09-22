@@ -47,8 +47,18 @@ feature_selection:
   # Stage 2.5 - kiểm tra ngoài mẫu: bin học trên train, chỉ đếm lại trên validation.
   min_iv_retention_validation: 0.50   # IV validation / IV train dưới mức này -> cờ iv_drops_out_of_sample
   min_bad_rate_rank_corr: 0.80        # tương quan hạng bad rate giữa các bin, train vs validation
-  max_abs_correlation: 0.70
+  # Stage 2.6 - chọn biến. Thứ tự: policy -> IV -> cờ 2.5 -> tương quan WoE -> VIF.
+  max_abs_correlation: 0.70           # |r| giữa WoE của hai biến; giữ biến có IV cao hơn
+  max_abs_rank_correlation_raw: 0.90  # |Spearman| trên giá trị gốc: hai cách đo cùng một đại lượng
   max_vif: 5.0
+  # Cờ của 2.5 làm biến bị loại (weak đã do iv_min lo; binning_review chỉ là cờ xem lại).
+  drop_on_flags: [leakage_suspect, iv_drops_out_of_sample, trend_not_confirmed, unstable_vs_validation, shift_vs_current]
+  # Biến bị loại vì chính sách, không vì thống kê: biến -> lý do (bắt buộc).
+  # QUYẾT ĐỊNH 2026-09-22 (PROJECT_SCOPE #7): để trống có chủ đích. CODE_GENDER,
+  # NAME_FAMILY_STATUS và DAYS_BIRTH được chọn theo tiêu chí thống kê như mọi biến khác.
+  # Hệ quả bắt buộc: model card ghi rủi ro fairness; Module 2 phân tích hiệu năng theo
+  # ba phân khúc này (validation.yaml -> segments, fairness_review).
+  policy_exclude: {}
   require_stable_coefficient_sign: true
 
 champion:

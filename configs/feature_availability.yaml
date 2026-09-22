@@ -105,7 +105,13 @@ home_credit:
 
   bureau_balance:
     grain: "Trạng thái một khoản vay bureau trong một tháng"
-    evidence: "MONTHS_BALANCE <= 0 trên toàn bộ dữ liệu."
+    # Loại khỏi mô hình (Stage 2.6, 2026-09-22): độ phủ khác hẳn giữa hai population do cách
+    # Kaggle chuẩn bị dữ liệu, không phải đặc điểm khách hàng. Xem docs/data_quality_home_credit.md mục 8.
+    use_for_features: false
+    evidence: >-
+      MONTHS_BALANCE <= 0 trên toàn bộ dữ liệu. Nhưng chỉ 35.7% khoản vay bureau của hồ sơ train
+      có lịch sử tháng, so với 99.9% ở application_test: mọi biến BB_* có PSI 1.40-1.61 so với
+      application_test, và "thiếu lịch sử tháng" ở train đo việc thu thập dữ liệu chứ không đo rủi ro.
     default: {availability: historical}
     columns:
       SK_ID_BUREAU:

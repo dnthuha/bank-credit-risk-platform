@@ -263,20 +263,25 @@ def build_features(
     con: duckdb.DuckDBPyConnection,
 ) -> dict[str, Any]:
     """Write one row per applicant to data/processed/home_credit/features.parquet."""
-    groups = {
-        "bureau": _bureau_sql(contract, matrix, settings),
-        "bureau_balance": _bureau_balance_sql(contract, matrix, settings),
-        "previous_application": _previous_application_sql(contract, settings),
-        "pos_cash_balance": _pos_cash_sql(contract, settings),
-        "credit_card_balance": _credit_card_sql(contract, settings),
-        "installments_payments": _installments_sql(contract, settings),
+    builders = {
+        "bureau": lambda: _bureau_sql(contract, matrix, settings),
+        "bureau_balance": lambda: _bureau_balance_sql(contract, matrix, settings),
+        "previous_application": lambda: _previous_application_sql(contract, settings),
+        "pos_cash_balance": lambda: _pos_cash_sql(contract, settings),
+        "credit_card_balance": lambda: _credit_card_sql(contract, settings),
+        "installments_payments": lambda: _installments_sql(contract, settings),
     }
+    # A history table the availability matrix marks use_for_features: false yields no feature at all.
+    groups = {name: build() for name, build in builders.items() if matrix.table(name).use_for_features}
+    skipped = sorted(set(builders) - set(groups))
+    if skipped:
+        log.info("  history tables excluded by the availability matrix: %s", ", ".join(skipped))
 
     ctes = [f"app AS ({_application_sql(contract, matrix, settings, con)})"]
     ctes += [f"{name} AS ({sql})" for name, sql in groups.items()]
     flags = ", ".join(
         f"({count} IS NOT NULL)::INT AS HAS_{prefix}_HISTORY"
-        for name, (prefix, count) in HISTORY_GROUPS.items()
+        for name, (prefix, count) in HISTORY_GROUPS.items() if name in groups
     )
     joins = " ".join(f"LEFT JOIN {name} USING (SK_ID_CURR)" for name in groups)
     selected = ["app.*"] + [f"{name}.* EXCLUDE (SK_ID_CURR)" for name in groups] + [flags]
@@ -304,7 +309,7 @@ def build_features(
     columns = [row[0] for row in con.execute(f"DESCRIBE SELECT * FROM {rel}").fetchall()]
     coverage = {
         prefix: con.execute(f"SELECT AVG(HAS_{prefix}_HISTORY) FROM {rel}").fetchone()[0]
-        for prefix, _ in HISTORY_GROUPS.values()
+        for name, (prefix, _) in HISTORY_GROUPS.items() if name in groups
     }
     log.info("  features: %d rows (%d train, %d test), %d columns", n_rows, n_train, n_test, len(columns))
     log.info("  history coverage: %s", ", ".join(f"{k} {v:.1%}" for k, v in coverage.items()))
@@ -316,5 +321,6 @@ def build_features(
         "columns": len(columns),
         "feature_columns": [c for c in columns if c not in {"SK_ID_CURR", "population", "TARGET"}],
         "history_coverage": {k: float(v) for k, v in coverage.items()},
+        "history_tables_excluded": skipped,
         "output": out_path.relative_to(settings.data_dir).as_posix(),
     }

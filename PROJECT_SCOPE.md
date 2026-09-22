@@ -33,6 +33,7 @@ Cùng với đó: pipeline chạy bằng một lệnh, test tự động cho ph�
 | 4 | Laptop khoảng 7.4 GB RAM | DuckDB + parquet, giới hạn RAM của DuckDB qua `.env` | Bảng panel lớn phải xử lý trong DuckDB, không load hết vào pandas. |
 | 5 | Cure rồi lại 90+ | Vẫn tính là event (`redefault_after_cure_counts_as_event: true`) | Watchlist bắt được cả khoản tái vỡ nợ. Có cờ `ever_90plus_before_t` để phân tích riêng. |
 | 6 | Môi trường | `venv` + Python 3.13, thư viện ghim trong `requirements.txt` | Conda không solve được env trên máy này, nên không dùng. |
+| 7 | Thuộc tính nhạy cảm trong scorecard (2026-09-22) | **Không loại theo chính sách**: `CODE_GENDER`, `NAME_FAMILY_STATUS`, `DAYS_BIRTH` được chọn theo tiêu chí thống kê như mọi biến khác (`policy_exclude` để trống) | Scorecard cho điểm khác nhau theo giới tính (nam WoE -0.25) và tình trạng hôn nhân (độc thân -0.21). **Rủi ro fairness phải ghi trong model card**; Module 2 bắt buộc phân tích hiệu năng theo ba nhóm này (`validation.yaml`, `fairness_review`). Không phù hợp để dùng thật khi luật cấm các thuộc tính này. |
 
 Mọi định nghĩa có thể đổi được nằm ở `configs/definitions.yaml`. Đổi định nghĩa sẽ đổi config hash ghi trong manifest của mỗi run.
 

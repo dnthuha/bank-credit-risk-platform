@@ -32,6 +32,11 @@ segments:
   - {name: score_band, column: score_band}
   - {name: contract_type, column: NAME_CONTRACT_TYPE}
   - {name: ext_source_missing_pattern, column: ext_source_missing_pattern}
+  # Thuộc tính nhạy cảm được giữ trong scorecard (PROJECT_SCOPE #7): bắt buộc báo cáo
+  # AUC, calibration và tỷ lệ bị từ chối theo từng nhóm.
+  - {name: gender, column: CODE_GENDER, fairness_review: true}
+  - {name: family_status, column: NAME_FAMILY_STATUS, fairness_review: true}
+  - {name: age_band, column: DAYS_BIRTH, fairness_review: true}
 
 implementation_check:
   sample_size: 5000
