@@ -275,7 +275,30 @@ Vì `application_test` được chọn làm population “hiện tại”, báo 
 - tránh kết luận model không ổn định theo thời gian nếu chưa có một tập quan sát thực sự
   thuộc giai đoạn muộn hơn để đối chứng.
 
-## 8. Tái lập kết quả
+## 8. Phát hiện từ Stage 2.5: độ ổn định của feature
+
+Bin học trên train, áp nguyên xi sang validation và `application_test`
+(run `20260922T150931Z-a69cb073`, báo cáo `artifacts/<run_id>/features/iv_report.md`).
+
+**`bureau_balance` có mặt rất khác nhau giữa hai population.** Đây là cách Kaggle chuẩn bị
+dữ liệu, không phải đặc điểm của khách hàng:
+
+| Trong số hồ sơ có bureau | Train | `application_test` |
+|---|---:|---:|
+| Có lịch sử tháng `bureau_balance` | 35.0% | 100.0% |
+| Khoản vay bureau có lịch sử tháng | 35.7% | 99.9% |
+
+Hệ quả: mọi biến `BB_*` lệch rất mạnh so với `application_test` (PSI 1.40-1.61). Ở train,
+"thiếu lịch sử tháng" chủ yếu đo việc thu thập dữ liệu, nên WoE của nhóm này không dùng được
+cho khách mới. Các biến này cũng yếu (IV <= 0.012).
+
+**Các lệch khác so với `application_test`:** `APP_ANNUITY_TO_CREDIT` (PSI 0.49) và
+`NAME_CONTRACT_TYPE` (0.21) cùng phản ánh chênh lệch tỷ trọng Revolving loans ở mục 7;
+`AMT_REQ_CREDIT_BUREAU_MON` (0.43) và `_QRT` (0.28) cũng phân phối khác ở `application_test`.
+
+**Train và validation cân bằng như mong đợi:** PSI lớn nhất giữa hai tập là 0.0006.
+
+## 9. Tái lập kết quả
 
 Chạy ingest và validation từ thư mục gốc của dự án:
 

@@ -17,7 +17,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 | Chặng | Nội dung | Trạng thái |
 |---|---|---|
 | 1 | Nền móng: repo, môi trường, data contract, định nghĩa, ingest, data validation, test lõi | Dữ liệu thật đã qua validate: Home Credit (135 check, 0 error), Freddie Mac 2012-2025 (0 error) |
-| 2 | WoE / IV, binning, rà soát leakage | Đang làm: split (2.1), availability matrix (2.2), bảng feature (2.3), binning engine (2.4) đã xong |
+| 2 | WoE / IV, binning, rà soát leakage | Đang làm: split, availability matrix, bảng feature, binning, báo cáo IV và độ ổn định (2.1-2.5) đã xong |
 | 3 | Scorecard | |
 | 4 | LightGBM challenger | |
 | 5 | Calibration, đóng băng model | |
@@ -81,7 +81,7 @@ bank-credit-risk-platform/
 ├── docs/                         # data quality, phát hiện từ dữ liệu thật
 ├── src/credit_risk/
 │   ├── data/                     # contracts, ingest, validate (DuckDB)
-│   ├── features/                 # split.py, availability.py, build.py, binning.py, woe.py
+│   ├── features/                 # split.py, availability.py, build.py, binning.py, iv_report.py, woe.py
 │   ├── models/
 │   ├── validation/               # metrics.py: AUC, Gini, KS, Brier, PSI
 │   ├── monitoring/               # buckets.py, transitions.py (roll rate)

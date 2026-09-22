@@ -44,6 +44,9 @@ binning:
 
 feature_selection:
   iv_min: 0.02                  # tham chiếu definitions.metric_thresholds.iv
+  # Stage 2.5 - kiểm tra ngoài mẫu: bin học trên train, chỉ đếm lại trên validation.
+  min_iv_retention_validation: 0.50   # IV validation / IV train dưới mức này -> cờ iv_drops_out_of_sample
+  min_bad_rate_rank_corr: 0.80        # tương quan hạng bad rate giữa các bin, train vs validation
   max_abs_correlation: 0.70
   max_vif: 5.0
   require_stable_coefficient_sign: true

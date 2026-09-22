@@ -24,6 +24,7 @@ from credit_risk.features.availability import (
 )
 from credit_risk.features.binning import BinningError, BinningSpec, binning_frame, binning_payload, fit_all
 from credit_risk.features.build import build_features
+from credit_risk.features.iv_report import ReportThresholds, iv_report, iv_report_markdown
 from credit_risk.features.split import SplitError, SplitSpec, assign_splits, split_summary
 from credit_risk.lineage import RunContext, new_run, write_manifest
 from credit_risk.settings import Settings, load_settings
@@ -71,9 +72,11 @@ def _validate_data(ctx: RunContext, sources: Sequence[str]) -> None:
 
 
 def _features(ctx: RunContext, sources: Sequence[str]) -> None:
-    """Stage 2.1: assign the Home Credit population split, once, for every later step.
+    """Stage 2 for Home Credit, in order: population split (2.1), availability
+    matrix (2.2), applicant-level feature table (2.3), binning fitted on train
+    (2.4), out-of-sample IV and stability report (2.5).
 
-    Binning and WoE (stage 2.4) and the mortgage panel (stages 8-9) follow here.
+    The mortgage panel (stages 8-9) will join this step later.
     """
     if "home_credit" not in sources:
         ctx.record("features", "stub", "home_credit not in sources; nothing to build yet")
@@ -107,7 +110,8 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
     (summary_dir / "features_summary.json").write_text(
         json.dumps(features, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    binning = _fit_binning(ctx, con, features, out_path, summary["fingerprint"], summary_dir)
+    binnings, binning = _fit_binning(ctx, con, features, out_path, summary["fingerprint"], summary_dir)
+    report = _write_iv_report(ctx, con, features, out_path, binnings, binning, summary_dir)
     for row in summary["splits"]:
         log.info("  split %-12s %7d rows (%.1f%%)%s", row["split"], row["rows"], 100 * row["share"],
                  f", bad rate {row['bad_rate']:.4f}" if row.get("bad_rate") is not None else "")
@@ -119,7 +123,9 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
         f"{n_classified} usable columns in the availability matrix; "
         f"{features['columns']} column feature table for {features['rows']:,} applicants; "
         f"{binning['features']} features binned on {binning['rows']:,} train rows "
-        f"({binning['flagged_for_review']} flagged for review, fingerprint {binning['fingerprint'][:12]})",
+        f"({binning['flagged_for_review']} flagged for review, fingerprint {binning['fingerprint'][:12]}); "
+        f"{report['useful']} features with IV >= {report['iv_min']} on train, {report['flagged']} of them flagged "
+        "out of sample",
         [
             out_path.relative_to(ctx.settings.data_dir).as_posix(),
             features["output"],
@@ -130,11 +136,14 @@ def _features(ctx: RunContext, sources: Sequence[str]) -> None:
             "features/feature_availability.csv",
             "features/binning.json",
             "features/binning_table.csv",
+            "features/iv_report.md",
+            "features/iv_report.csv",
+            "features/bin_stability.csv",
         ],
     )
 
 
-def _fit_binning(ctx: RunContext, con, features: dict, splits_path, split_fingerprint: str, out_dir) -> dict:
+def _fit_binning(ctx: RunContext, con, features: dict, splits_path, split_fingerprint: str, out_dir):
     """Stage 2.4: fit every bin on the train split only, then persist the table for scoring."""
     try:
         spec = BinningSpec.from_config(ctx.config.model_dev, ctx.config.definitions)
@@ -168,13 +177,40 @@ def _fit_binning(ctx: RunContext, con, features: dict, splits_path, split_finger
                   if b.iv > ctx.config.definitions["metric_thresholds"]["iv"]["leakage_suspect_above"]]
     log.info("  binning: %d features on %d train rows | %d flagged for review | IV above leakage threshold: %s",
              len(binnings), len(train), len(flagged), suspicious or "none")
-    return {
+    return binnings, {
         "features": len(binnings),
         "rows": len(train),
         "flagged_for_review": len(flagged),
         "fingerprint": payload["fingerprint"],
         "output": stable_path.relative_to(ctx.settings.data_dir).as_posix(),
     }
+
+
+def _write_iv_report(ctx: RunContext, con, features: dict, splits_path, binnings, binning: dict, out_dir) -> dict:
+    """Stage 2.5: apply the train bins to validation and to application_test; flag, never refit."""
+    features_path = ctx.settings.data_dir / features["output"]
+    base = f"read_parquet({sql_str(features_path)})"
+    validation = con.execute(
+        f"SELECT f.* FROM {base} f JOIN read_parquet({sql_str(splits_path)}) s USING (SK_ID_CURR) "
+        "WHERE s.split = 'validation'"
+    ).df()
+    current = con.execute(f"SELECT * FROM {base} WHERE population = 'test'").df()
+
+    th = ReportThresholds.from_config(ctx.config.definitions, ctx.config.model_dev)
+    table, bins = iv_report(binnings, validation, current, "TARGET", th)
+    table.to_csv(out_dir / "iv_report.csv", index=False, encoding="utf-8")
+    bins.to_csv(out_dir / "bin_stability.csv", index=False, encoding="utf-8")
+    meta = {"rows_train": binning["rows"], "rows_validation": len(validation), "rows_current": len(current)}
+    (out_dir / "iv_report.md").write_text(iv_report_markdown(table, th, meta), encoding="utf-8")
+
+    useful = table[table["iv_train"] >= th.iv_min]
+    out_of_sample = {"iv_drops_out_of_sample", "trend_not_confirmed", "unstable_vs_validation"}
+    flagged = useful[useful["review_flags"].map(lambda f: bool(out_of_sample & set(f.split(";"))))]
+    log.info("  iv report: %d useful features on train | %d flagged out of sample | "
+             "median IV kept on validation %.0f%% | PSI vs application_test >= %.2f: %d features",
+             len(useful), len(flagged), 100 * useful["iv_retention"].median(),
+             th.psi_significant, int((table["psi_current"] >= th.psi_significant).sum()))
+    return {"useful": len(useful), "flagged": len(flagged), "iv_min": th.iv_min}
 
 
 def _write_availability_matrix(ctx: RunContext, contract, con, out_dir):
