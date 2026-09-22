@@ -10,6 +10,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 - Phạm vi, quyết định đã chốt và các giới hạn: [PROJECT_SCOPE.md](PROJECT_SCOPE.md)
 - Cách tải dữ liệu: [data/README.md](data/README.md)
 - Chất lượng dữ liệu: [Home Credit](docs/data_quality_home_credit.md), [Freddie Mac](docs/data_quality_freddie_mac.md)
+- Stage 2, WoE / IV và danh sách biến: [docs/stage2_woe_iv.md](docs/stage2_woe_iv.md)
 - Định nghĩa nghiệp vụ (single source of truth): [configs/definitions.yaml](configs/definitions.yaml)
 
 ## Trạng thái
@@ -17,7 +18,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 | Chặng | Nội dung | Trạng thái |
 |---|---|---|
 | 1 | Nền móng: repo, môi trường, data contract, định nghĩa, ingest, data validation, test lõi | Dữ liệu thật đã qua validate: Home Credit (135 check, 0 error), Freddie Mac 2012-2025 (0 error) |
-| 2 | WoE / IV, binning, rà soát leakage | Đang làm: 2.1-2.6 đã xong (split, availability matrix, bảng feature, binning, báo cáo IV, shortlist 45 biến); còn 2.7 |
+| 2 | WoE / IV, binning, rà soát leakage | **Xong** (tag `v0.2-woe-iv`): 45 biến, bảng bin tái lập được và chỉ học trên train. [Tổng kết](docs/stage2_woe_iv.md) |
 | 3 | Scorecard | |
 | 4 | LightGBM challenger | |
 | 5 | Calibration, đóng băng model | |
