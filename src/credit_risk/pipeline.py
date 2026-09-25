@@ -11,6 +11,9 @@ import json
 import logging
 from collections.abc import Callable, Sequence
 
+import numpy as np
+import pandas as pd
+
 from credit_risk.config import ConfigError, check_definitions, load_config
 from credit_risk.data.contracts import parse_contract
 from credit_risk.data.db import connect, sql_ident, sql_str
@@ -22,7 +25,14 @@ from credit_risk.features.availability import (
     availability_markdown,
     parse_availability,
 )
-from credit_risk.features.binning import BinningError, BinningSpec, binning_frame, binning_payload, fit_all
+from credit_risk.features.binning import (
+    BinningError,
+    BinningSpec,
+    binning_frame,
+    binning_payload,
+    fit_all,
+    load_binnings,
+)
 from credit_risk.features.build import build_features
 from credit_risk.features.iv_report import ReportThresholds, iv_report, iv_report_markdown
 from credit_risk.features.selection import (
@@ -34,6 +44,8 @@ from credit_risk.features.selection import (
 )
 from credit_risk.features.split import SplitError, SplitSpec, assign_splits, split_summary
 from credit_risk.lineage import RunContext, new_run, write_manifest
+from credit_risk.models.scorecard import Scorecard, ScorecardError, ScorecardSpec, fit_sign_stable, scorecard_payload
+from credit_risk.reporting.model_card import SENSITIVE, discrimination, model_card_markdown, score_bands, score_psi
 from credit_risk.settings import Settings, load_settings
 
 log = logging.getLogger(__name__)
@@ -285,6 +297,150 @@ def _write_availability_matrix(ctx: RunContext, contract, con, out_dir):
     return matrix, int(frame["use"].sum())
 
 
+def _train(ctx: RunContext, sources: Sequence[str]) -> None:
+    """Stage 3: the champion scorecard, fitted on train from the Stage 2 bins and shortlist.
+
+    The LightGBM challenger (stage 4) will join this step later.
+    """
+    if "home_credit" not in sources:
+        ctx.record("train", "stub", "home_credit not in sources; nothing to train yet")
+        return
+
+    folder = ctx.settings.processed_dir / "home_credit"
+    paths = {name: folder / name for name in ("features.parquet", "splits.parquet", "binning.json", "shortlist.json")}
+    for path in paths.values():
+        if not path.exists():
+            raise StepFailed(f"{path.name} not found - run features first")
+    try:
+        spec = ScorecardSpec.from_config(ctx.config.model_dev, ctx.config.definitions)
+    except ScorecardError as exc:
+        raise StepFailed(f"scorecard: {exc}") from exc
+
+    binning = json.loads(paths["binning.json"].read_text(encoding="utf-8"))
+    shortlist = json.loads(paths["shortlist.json"].read_text(encoding="utf-8"))
+    if shortlist["binning_fingerprint"] != binning["fingerprint"]:
+        raise StepFailed("shortlist.json was not built on this binning.json - run features again")
+    binnings = load_binnings(binning)
+    selected = shortlist["selected"]
+    if not selected:
+        raise StepFailed("the shortlist is empty: no feature to fit a scorecard on")
+
+    con = connect(ctx.settings)
+    available = {row[0] for row in con.execute(
+        f"DESCRIBE SELECT * FROM read_parquet({sql_str(paths['features.parquet'])})").fetchall()}
+    missing = [c for c in ["SK_ID_CURR", "population", "TARGET", "NAME_CONTRACT_TYPE", *selected] if c not in available]
+    if missing:
+        raise StepFailed(f"features.parquet lacks {missing} - run features again")
+    columns = ["SK_ID_CURR", "population", "TARGET", "NAME_CONTRACT_TYPE", *selected,
+               *(c for c in SENSITIVE if c in available)]
+    columns = list(dict.fromkeys(columns))
+    frame = con.execute(
+        f"SELECT {', '.join('f.' + sql_ident(c) for c in columns)}, s.split "
+        f"FROM read_parquet({sql_str(paths['features.parquet'])}) f "
+        f"LEFT JOIN read_parquet({sql_str(paths['splits.parquet'])}) s USING (SK_ID_CURR) ORDER BY SK_ID_CURR"
+    ).df()
+    train = frame[frame["split"] == "train"]
+    validation = frame[frame["split"] == "validation"]
+    current = frame[frame["population"] == "test"]
+
+    woe_train = pd.DataFrame({f: binnings[f].transform(train[f]) for f in selected}, index=train.index)
+    try:
+        fit = fit_sign_stable(woe_train, train["TARGET"].to_numpy(dtype=int), spec)
+    except ScorecardError as exc:
+        raise StepFailed(f"scorecard: {exc}") from exc
+    card = Scorecard.build(fit, binnings, spec)
+
+    meta = {
+        "run_id": ctx.run_id,
+        "fitted_on": "train",
+        "rows_train": len(train),
+        "split_fingerprint": binning["split_fingerprint"],
+        "binning_fingerprint": binning["fingerprint"],
+        "shortlist_fingerprint": shortlist["fingerprint"],
+    }
+    payload = scorecard_payload(card, fit, meta)
+    text = json.dumps(payload, indent=1, ensure_ascii=False, default=str)
+    stable_path = folder / "scorecard.json"
+    stable_path.write_text(text, encoding="utf-8")
+    out_dir = ctx.run_dir / "train"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "scorecard.json").write_text(text, encoding="utf-8")
+    card.table().to_csv(out_dir / "scorecard_table.csv", index=False, encoding="utf-8")
+    fit.trail.to_csv(out_dir / "sign_trail.csv", index=False, encoding="utf-8")
+
+    # Scores and reason codes for every applicant, so stages 5-6 read one frozen output.
+    points = card.points_frame(frame)
+    score = card.base_points + points.sum(axis=1).to_numpy(dtype=int)
+    reasons = card.reason_codes(points)
+    scores = pd.DataFrame({"SK_ID_CURR": frame["SK_ID_CURR"].to_numpy(), "population": frame["population"].to_numpy(),
+                           "split": frame["split"].to_numpy(), "score": score,
+                           "pd_uncalibrated": card.pd_from_score(score)})
+    for i in range(spec.reason_codes):
+        scores[f"reason_{i + 1}"] = [r[i] if i < len(r) else None for r in reasons]
+    scores_path = folder / "scores.parquet"
+    scores.to_parquet(scores_path, index=False)
+    score_of = pd.Series(score, index=frame.index)
+
+    # Development performance: train and validation only.
+    initial_intercept, initial_coef = fit.initial
+    woe_validation = np.column_stack([binnings[f].transform(validation[f]) for f in selected])
+    all_features_risk = initial_intercept + woe_validation @ np.array([initial_coef[f] for f in selected])
+    auc_all_features = discrimination(validation["TARGET"], all_features_risk)["auc"]
+    performance = {
+        sample: {"exact": discrimination(part["TARGET"], card.exact_log_odds_bad(part)),
+                 "points": discrimination(part["TARGET"], -score_of[part.index])}
+        for sample, part in (("train", train), ("validation", validation))
+    }
+    bands = score_bands(score_of[validation.index], validation["TARGET"],
+                        card.pd_from_score(score_of[validation.index]))
+    stability = ctx.config.validation.get("stability") or {}
+    psi_scores = score_psi(score_of[train.index], score_of[current.index], train["NAME_CONTRACT_TYPE"],
+                           current["NAME_CONTRACT_TYPE"], int(stability.get("psi_n_bins", 10)),
+                           float(ctx.config.definitions["metric_thresholds"]["psi"]["zero_bin_epsilon"]))
+    (out_dir / "performance.json").write_text(json.dumps({
+        "performance": performance,
+        "auc_validation_all_features": auc_all_features,
+        "score_psi_vs_application_test": psi_scores,
+        "validation_bands": bands.to_dict(orient="records"),
+    }, indent=2), encoding="utf-8")
+
+    context = {
+        "meta": {**meta, "shortlisted": len(selected), "rows_validation": len(validation),
+                 "bad_rate_train": float(train["TARGET"].mean()),
+                 "auc_validation_all_features": auc_all_features},
+        "performance": performance,
+        "bands": bands,
+        "psi": psi_scores,
+        "iv": {name: b.iv for name, b in binnings.items()},
+        "contract_mix": {"train": train["NAME_CONTRACT_TYPE"].value_counts(normalize=True).to_dict(),
+                         "current": current["NAME_CONTRACT_TYPE"].value_counts(normalize=True).to_dict()},
+    }
+    (out_dir / "model_card.md").write_text(model_card_markdown(card, payload, context), encoding="utf-8")
+
+    gini_validation = performance["validation"]["points"]["gini"]
+    log.info("  scorecard: %d of %d shortlisted features kept (%d dropped for coefficient sign) | "
+             "base points %d | Gini train %.4f, validation %.4f | score PSI vs application_test %.4f",
+             len(card.features), len(selected), len(fit.trail), card.base_points,
+             performance["train"]["points"]["gini"], gini_validation, psi_scores["all"])
+    ctx.record(
+        "train",
+        "ok",
+        f"scorecard: {len(card.features)} of {len(selected)} shortlisted features kept "
+        f"({len(fit.trail)} dropped for coefficient sign); validation Gini {gini_validation:.4f}; "
+        f"base points {card.base_points}; fingerprint {payload['fingerprint'][:12]}. "
+        "LightGBM challenger: planned for roadmap stage 4",
+        [
+            stable_path.relative_to(ctx.settings.data_dir).as_posix(),
+            scores_path.relative_to(ctx.settings.data_dir).as_posix(),
+            "train/scorecard.json",
+            "train/scorecard_table.csv",
+            "train/sign_trail.csv",
+            "train/performance.json",
+            "train/model_card.md",
+        ],
+    )
+
+
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:
     def run(ctx: RunContext, sources: Sequence[str]) -> None:
         log.info("[stub] %s - not implemented yet (roadmap stage %s)", step, stage)
@@ -297,7 +453,7 @@ STEPS: dict[str, Callable[[RunContext, Sequence[str]], None]] = {
     "ingest": _ingest,
     "validate-data": _validate_data,
     "features": _features,
-    "train": _stub("train", "3-4"),
+    "train": _train,
     "calibrate": _stub("calibrate", "5"),
     "validate-model": _stub("validate-model", "6"),
     "monitor": _stub("monitor", "8"),

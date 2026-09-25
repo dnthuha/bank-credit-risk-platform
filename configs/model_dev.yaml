@@ -64,6 +64,15 @@ feature_selection:
 champion:
   model: woe_logistic_scorecard
   regularization: l2
+  # C = 1 là phạt L2 nhẹ: với ~185k hồ sơ train, C 1 / 0.01 cho AUC validation như nhau
+  # (0.7582 / 0.7584, 45 biến); C 0.001 bắt đầu mất AUC. Giữ 1 để hệ số gần MLE.
+  C: 1.0
+  # Hệ số trên WoE phải âm (feature_selection.require_stable_coefficient_sign). Mỗi vòng
+  # fit lại trên bootstrap phân tầng của train; biến âm trong dưới min_share số lần bị
+  # loại, mỗi vòng một biến, rồi fit lại.
+  sign_stability:
+    bootstrap_resamples: 50
+    min_share: 0.95
 
 challenger:
   model: lightgbm

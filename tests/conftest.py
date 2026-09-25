@@ -41,15 +41,17 @@ def settings(tmp_path: Path) -> Settings:
 # Home Credit: CSV with header, only the columns the contract declares (+1 extra)
 # ---------------------------------------------------------------------------
 
-def write_home_credit_raw(settings: Settings) -> Path:
+def write_home_credit_raw(settings: Settings, n: int = 40, signal: bool = False) -> Path:
+    """`n` applicants in application_train. `signal`: TARGET follows EXT_SOURCE_2 / EXT_SOURCE_3
+    through a logistic model instead of a coin flip, so Stage 3 has something to fit
+    (the defaults give the original 40-row fixture, byte for byte)."""
     rng = np.random.default_rng(0)
     raw = settings.raw_dir / "home_credit"
     raw.mkdir(parents=True, exist_ok=True)
-    n = 40
     ids = np.arange(100001, 100001 + n)
     test_ids = np.arange(200001, 200011)
 
-    pd.DataFrame(
+    application = pd.DataFrame(
         {
             "SK_ID_CURR": ids,
             "TARGET": (rng.random(n) < 0.2).astype(int),
@@ -70,9 +72,15 @@ def write_home_credit_raw(settings: Settings) -> Path:
             "AMT_GOODS_PRICE": rng.uniform(1e5, 9e5, n).round(1),
             "CNT_FAM_MEMBERS": rng.integers(1, 5, n),
         }
-    ).to_csv(raw / "application_train.csv", index=False)
+    )
+    if signal:
+        # A separate generator, so every other column stays what the seed-0 stream gives.
+        logit = -2.2 - 1.8 * (application["EXT_SOURCE_2"] - 0.5) - 1.5 * (application["EXT_SOURCE_3"] - 0.5)
+        u = np.random.default_rng(1).random(n)
+        application["TARGET"] = (u < 1 / (1 + np.exp(-logit))).astype(int)
+    application.to_csv(raw / "application_train.csv", index=False)
 
-    pd.DataFrame(
+    current = pd.DataFrame(
         {
             "SK_ID_CURR": test_ids,
             "AMT_INCOME_TOTAL": rng.uniform(5e4, 3e5, 10).round(1),
@@ -83,7 +91,28 @@ def write_home_credit_raw(settings: Settings) -> Path:
             "DAYS_ID_PUBLISH": -7 * np.arange(10),
             "DAYS_LAST_PHONE_CHANGE": -3.0 * np.arange(10),
         }
-    ).to_csv(raw / "application_test.csv", index=False)
+    )
+    if signal:
+        # A current sample drawn like train (EXT_SOURCE included), large enough for PSI to mean something.
+        other = np.random.default_rng(2)
+        m = 1000
+        current = pd.DataFrame({
+            "SK_ID_CURR": np.arange(200001, 200001 + m),
+            "NAME_CONTRACT_TYPE": other.choice(["Cash loans", "Revolving loans"], m),
+            "CODE_GENDER": other.choice(["M", "F"], m),
+            "AMT_INCOME_TOTAL": other.uniform(5e4, 3e5, m).round(1),
+            "AMT_CREDIT": other.uniform(1e5, 1e6, m).round(1),
+            "AMT_ANNUITY": other.uniform(5e3, 5e4, m).round(1),
+            "DAYS_BIRTH": -other.integers(7000, 25000, m),
+            "DAYS_EMPLOYED": -other.integers(0, 10000, m),
+            "EXT_SOURCE_1": other.random(m),
+            "EXT_SOURCE_2": other.random(m),
+            "EXT_SOURCE_3": other.random(m),
+            "DAYS_REGISTRATION": -other.integers(0, 10000, m).astype(float),
+            "DAYS_ID_PUBLISH": -other.integers(0, 5000, m),
+            "DAYS_LAST_PHONE_CHANGE": -other.integers(0, 3000, m).astype(float),
+        })
+    current.to_csv(raw / "application_test.csv", index=False)
 
     bureau_ids = np.arange(5000001, 5000061)
     pd.DataFrame(
@@ -237,7 +266,7 @@ def write_freddie_raw(settings: Settings, year: int = 2015) -> Path:
 
 @pytest.fixture
 def raw_data(settings: Settings) -> Settings:
-    write_home_credit_raw(settings)
+    write_home_credit_raw(settings, n=20000, signal=True)
     write_freddie_raw(settings)
     return settings
 

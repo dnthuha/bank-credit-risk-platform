@@ -22,13 +22,15 @@ def test_full_pipeline_runs_end_to_end(raw_data):
     assert manifest["status"] == "ok"
     assert [s["step"] for s in manifest["steps"]] == list(STEPS)
     statuses = {s["step"]: s["status"] for s in manifest["steps"]}
-    assert statuses["ingest"] == statuses["validate-data"] == statuses["features"] == "ok"
-    assert all(statuses[s] == "stub" for s in list(STEPS)[3:])
+    assert statuses["ingest"] == statuses["validate-data"] == statuses["features"] == statuses["train"] == "ok"
+    assert all(statuses[s] == "stub" for s in list(STEPS)[4:])
     assert manifest["run_id"].endswith(manifest["config_hash"][:8])
     assert manifest["packages"]["duckdb"] is not None
 
     assert (run_dir / "data_validation" / "home_credit.md").exists()
     assert (run_dir / "features" / "splits_summary.json").exists()
+    assert (run_dir / "train" / "model_card.md").exists()
+    assert (settings.processed_dir / "home_credit" / "scorecard.json").exists()
     assert (settings.processed_dir / "freddie_mac" / "performance.parquet").exists()
     assert (settings.processed_dir / "home_credit" / "_ingest_manifest.json").exists()
 
