@@ -12,6 +12,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 - Chất lượng dữ liệu: [Home Credit](docs/data_quality_home_credit.md), [Freddie Mac](docs/data_quality_freddie_mac.md)
 - Stage 2, WoE / IV và danh sách biến: [docs/stage2_woe_iv.md](docs/stage2_woe_iv.md)
 - Stage 3, scorecard: [docs/stage3_scorecard.md](docs/stage3_scorecard.md)
+- Stage 4, LightGBM challenger: [docs/stage4_lightgbm.md](docs/stage4_lightgbm.md)
 - Định nghĩa nghiệp vụ (single source of truth): [configs/definitions.yaml](configs/definitions.yaml)
 
 ## Trạng thái
@@ -59,7 +60,7 @@ python -m credit_risk run --source freddie_mac             # chỉ một nguồn
 | 1 | `ingest` | CSV / TXT thô → parquet đúng kiểu | `data/processed/<source>/*.parquet` |
 | 2 | `validate-data` | Kiểm tra theo data contract; rule `error` fail thì dừng | `artifacts/<run_id>/data_validation/` |
 | 3 | `features` | Split, availability matrix, bảng feature cấp hồ sơ, binning + WoE fit trên train, báo cáo IV, shortlist (M1); panel + biến trễ (M3) còn lại | `data/processed/home_credit/{splits,features}.parquet`, `binning.json`, `shortlist.json`, `artifacts/<run_id>/features/` |
-| 4 | `train` | Scorecard: logistic trên WoE, loại biến sai / không ổn định dấu, quy đổi điểm, mã lý do, model card (M1); LightGBM còn lại | `data/processed/home_credit/{scorecard.json,scores.parquet}`, `artifacts/<run_id>/train/` |
+| 4 | `train` | Scorecard: logistic trên WoE, loại biến sai / không ổn định dấu, quy đổi điểm, mã lý do, model card; LightGBM challenger: 30 cấu hình, early stopping, SHAP, so với champion (M1) | `data/processed/home_credit/{scorecard.json,scores.parquet,challenger.json,challenger_model.txt,challenger_scores.parquet}`, `artifacts/<run_id>/train/` |
 | 5 | `calibrate` | Platt / isotonic trên calibration sample | *stub, chặng 5* |
 | 6 | `validate-model` | Tính lại độc lập AUC/Gini/KS, PSI, bootstrap | *stub, chặng 6* |
 | 7 | `monitor` | Vintage, roll rate, migration | *stub, chặng 8* |
@@ -84,11 +85,11 @@ bank-credit-risk-platform/
 ├── src/credit_risk/
 │   ├── data/                     # contracts, ingest, validate (DuckDB)
 │   ├── features/                 # split.py, availability.py, build.py, binning.py, iv_report.py, selection.py, woe.py
-│   ├── models/                   # scorecard.py: fit giữ dấu, điểm, mã lý do
+│   ├── models/                   # scorecard.py (champion), challenger.py (LightGBM, SHAP)
 │   ├── validation/               # metrics.py: AUC, Gini, KS, Brier, PSI
 │   ├── monitoring/               # buckets.py, transitions.py (roll rate)
 │   ├── ews/                      # labels.py: nhãn 90+ DPD trong 3 tháng
-│   ├── reporting/                # model_card.py
+│   ├── reporting/                # model_card.py, challenger_report.py
 │   ├── pipeline.py               # 9 bước, run_id, manifest
 │   └── cli.py
 ├── tests/                        # metric, label, data validation, pipeline, config
