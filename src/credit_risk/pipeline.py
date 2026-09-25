@@ -44,7 +44,14 @@ from credit_risk.features.selection import (
 )
 from credit_risk.features.split import SplitError, SplitSpec, assign_splits, split_summary
 from credit_risk.lineage import RunContext, new_run, write_manifest
+from credit_risk.models.challenger import ChallengerError, ChallengerSpec, fit_challenger
 from credit_risk.models.scorecard import Scorecard, ScorecardError, ScorecardSpec, fit_sign_stable, scorecard_payload
+from credit_risk.reporting.challenger_report import (
+    agreement,
+    challenger_report_markdown,
+    example_rows,
+    global_importance,
+)
 from credit_risk.reporting.model_card import SENSITIVE, discrimination, model_card_markdown, score_bands, score_psi
 from credit_risk.settings import Settings, load_settings
 
@@ -298,10 +305,7 @@ def _write_availability_matrix(ctx: RunContext, contract, con, out_dir):
 
 
 def _train(ctx: RunContext, sources: Sequence[str]) -> None:
-    """Stage 3: the champion scorecard, fitted on train from the Stage 2 bins and shortlist.
-
-    The LightGBM challenger (stage 4) will join this step later.
-    """
+    """Stage 3 champion scorecard, then the stage 4 LightGBM challenger, both on the Stage 2 outputs."""
     if "home_credit" not in sources:
         ctx.record("train", "stub", "home_credit not in sources; nothing to train yet")
         return
@@ -311,34 +315,49 @@ def _train(ctx: RunContext, sources: Sequence[str]) -> None:
     for path in paths.values():
         if not path.exists():
             raise StepFailed(f"{path.name} not found - run features first")
-    try:
-        spec = ScorecardSpec.from_config(ctx.config.model_dev, ctx.config.definitions)
-    except ScorecardError as exc:
-        raise StepFailed(f"scorecard: {exc}") from exc
-
     binning = json.loads(paths["binning.json"].read_text(encoding="utf-8"))
     shortlist = json.loads(paths["shortlist.json"].read_text(encoding="utf-8"))
     if shortlist["binning_fingerprint"] != binning["fingerprint"]:
         raise StepFailed("shortlist.json was not built on this binning.json - run features again")
     binnings = load_binnings(binning)
-    selected = shortlist["selected"]
-    if not selected:
-        raise StepFailed("the shortlist is empty: no feature to fit a scorecard on")
-
+    out_dir = ctx.run_dir / "train"
+    out_dir.mkdir(parents=True, exist_ok=True)
     con = connect(ctx.settings)
+
+    champion = _train_champion(ctx, con, paths, binning, shortlist, binnings, out_dir)
+    challenger = _train_challenger(ctx, con, paths, binning, binnings, out_dir, champion)
+    ctx.record("train", "ok", f"{champion['detail']}. {challenger['detail']}",
+               champion["outputs"] + challenger["outputs"])
+
+
+def _load_frame(con, paths, features: list[str], extra: Sequence[str] = ()) -> pd.DataFrame:
+    """Applicant rows with their split (none for application_test), ordered by id."""
     available = {row[0] for row in con.execute(
         f"DESCRIBE SELECT * FROM read_parquet({sql_str(paths['features.parquet'])})").fetchall()}
-    missing = [c for c in ["SK_ID_CURR", "population", "TARGET", "NAME_CONTRACT_TYPE", *selected] if c not in available]
+    required = ["SK_ID_CURR", "population", "TARGET", "NAME_CONTRACT_TYPE", *features]
+    missing = [c for c in required if c not in available]
     if missing:
         raise StepFailed(f"features.parquet lacks {missing} - run features again")
-    columns = ["SK_ID_CURR", "population", "TARGET", "NAME_CONTRACT_TYPE", *selected,
-               *(c for c in SENSITIVE if c in available)]
-    columns = list(dict.fromkeys(columns))
-    frame = con.execute(
+    columns = list(dict.fromkeys([*required, *(c for c in extra if c in available)]))
+    return con.execute(
         f"SELECT {', '.join('f.' + sql_ident(c) for c in columns)}, s.split "
         f"FROM read_parquet({sql_str(paths['features.parquet'])}) f "
         f"LEFT JOIN read_parquet({sql_str(paths['splits.parquet'])}) s USING (SK_ID_CURR) ORDER BY SK_ID_CURR"
     ).df()
+
+
+def _train_champion(ctx: RunContext, con, paths, binning: dict, shortlist: dict, binnings, out_dir) -> dict:
+    """Stage 3: the scorecard, fitted on train from the Stage 2 bins and shortlist."""
+    try:
+        spec = ScorecardSpec.from_config(ctx.config.model_dev, ctx.config.definitions)
+    except ScorecardError as exc:
+        raise StepFailed(f"scorecard: {exc}") from exc
+    selected = shortlist["selected"]
+    if not selected:
+        raise StepFailed("the shortlist is empty: no feature to fit a scorecard on")
+    folder = paths["features.parquet"].parent
+
+    frame = _load_frame(con, paths, selected, SENSITIVE)
     train = frame[frame["split"] == "train"]
     validation = frame[frame["split"] == "validation"]
     current = frame[frame["population"] == "test"]
@@ -362,8 +381,6 @@ def _train(ctx: RunContext, sources: Sequence[str]) -> None:
     text = json.dumps(payload, indent=1, ensure_ascii=False, default=str)
     stable_path = folder / "scorecard.json"
     stable_path.write_text(text, encoding="utf-8")
-    out_dir = ctx.run_dir / "train"
-    out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "scorecard.json").write_text(text, encoding="utf-8")
     card.table().to_csv(out_dir / "scorecard_table.csv", index=False, encoding="utf-8")
     fit.trail.to_csv(out_dir / "sign_trail.csv", index=False, encoding="utf-8")
@@ -424,14 +441,11 @@ def _train(ctx: RunContext, sources: Sequence[str]) -> None:
              "base points %d | Gini train %.4f, validation %.4f | score PSI vs application_test %.4f",
              len(card.features), len(selected), len(fit.trail), card.base_points,
              performance["train"]["points"]["gini"], gini_validation, psi_scores["all"])
-    ctx.record(
-        "train",
-        "ok",
-        f"scorecard: {len(card.features)} of {len(selected)} shortlisted features kept "
-        f"({len(fit.trail)} dropped for coefficient sign); validation Gini {gini_validation:.4f}; "
-        f"base points {card.base_points}; fingerprint {payload['fingerprint'][:12]}. "
-        "LightGBM challenger: planned for roadmap stage 4",
-        [
+    return {
+        "detail": (f"scorecard: {len(card.features)} of {len(selected)} shortlisted features kept "
+                   f"({len(fit.trail)} dropped for coefficient sign); validation Gini {gini_validation:.4f}; "
+                   f"base points {card.base_points}; fingerprint {payload['fingerprint'][:12]}"),
+        "outputs": [
             stable_path.relative_to(ctx.settings.data_dir).as_posix(),
             scores_path.relative_to(ctx.settings.data_dir).as_posix(),
             "train/scorecard.json",
@@ -440,7 +454,136 @@ def _train(ctx: RunContext, sources: Sequence[str]) -> None:
             "train/performance.json",
             "train/model_card.md",
         ],
-    )
+        "performance": performance,
+        "score": pd.Series(score, index=frame["SK_ID_CURR"].to_numpy()),
+        "features": card.features,
+        "fingerprint": payload["fingerprint"],
+    }
+
+
+def _train_challenger(ctx: RunContext, con, paths, binning: dict, binnings, out_dir, champion: dict) -> dict:
+    """Stage 4: LightGBM on every feature of the Stage 2.3 table, tuned on validation."""
+    try:
+        spec = ChallengerSpec.from_config(ctx.config.model_dev)
+    except ChallengerError as exc:
+        raise StepFailed(f"challenger: {exc}") from exc
+    folder = paths["features.parquet"].parent
+    features = list(binnings)  # every feature of the table; binning.json lists them all
+    categorical = [f for f in features if binnings[f].kind == "categorical"]
+
+    frame = _load_frame(con, paths, features)
+    train = frame[frame["split"] == "train"]
+    validation = frame[frame["split"] == "validation"]
+    current = frame[frame["population"] == "test"]
+    try:
+        challenger = fit_challenger(train, validation, features, categorical, "TARGET", spec)
+    except ChallengerError as exc:
+        raise StepFailed(f"challenger: {exc}") from exc
+
+    meta = {
+        "run_id": ctx.run_id,
+        "fitted_on": "train",
+        "early_stopped_on": "validation",
+        "rows_train": len(train),
+        "rows_validation": len(validation),
+        "split_fingerprint": binning["split_fingerprint"],
+        "binning_fingerprint": binning["fingerprint"],
+        "champion_fingerprint": champion["fingerprint"],
+    }
+    payload = {
+        **meta,
+        "spec": {**spec.__dict__},
+        "fingerprint": challenger.fingerprint(),
+        **challenger.to_dict(),
+        "trials": challenger.trials.to_dict(orient="records"),
+    }
+    text = json.dumps(payload, indent=1, ensure_ascii=False, default=str)
+    model_text = challenger.model_string()
+    for directory in (folder, out_dir):
+        (directory / "challenger.json").write_text(text, encoding="utf-8")
+        (directory / "challenger_model.txt").write_text(model_text, encoding="utf-8")
+    challenger.trials.to_csv(out_dir / "challenger_trials.csv", index=False, encoding="utf-8")
+
+    # PD and SHAP reason codes for every applicant, in chunks to bound the contribution matrix.
+    parts = []
+    for start in range(0, len(frame), 50_000):
+        chunk = frame.iloc[start:start + 50_000]
+        contributions = challenger.contributions(chunk)
+        part = pd.DataFrame({"SK_ID_CURR": chunk["SK_ID_CURR"].to_numpy(),
+                             "population": chunk["population"].to_numpy(), "split": chunk["split"].to_numpy(),
+                             "pd_challenger": challenger.predict_pd(chunk)})
+        reasons = challenger.reason_codes(contributions)
+        for i in range(spec.reason_codes):
+            part[f"reason_{i + 1}"] = [r[i] if i < len(r) else None for r in reasons]
+        parts.append(part)
+    scores = pd.concat(parts, ignore_index=True)
+    scores_path = folder / "challenger_scores.parquet"
+    scores.to_parquet(scores_path, index=False)
+    pd_of = pd.Series(scores["pd_challenger"].to_numpy(), index=frame.index)
+
+    performance = {sample: discrimination(part["TARGET"], pd_of[part.index])
+                   for sample, part in (("train", train), ("validation", validation))}
+    champion_perf = {sample: champion["performance"][sample]["points"] for sample in ("train", "validation")}
+    agree = agreement(pd_of[validation.index], champion["score"].loc[validation["SK_ID_CURR"]].to_numpy(),
+                      validation["TARGET"])
+    contributions = challenger.contributions(validation)
+    importance = global_importance(contributions, challenger)
+    importance.to_csv(out_dir / "challenger_importance.csv", index=False, encoding="utf-8")
+    stability = ctx.config.validation.get("stability") or {}
+    psi_pd = score_psi(pd_of[train.index], pd_of[current.index], train["NAME_CONTRACT_TYPE"],
+                       current["NAME_CONTRACT_TYPE"], int(stability.get("psi_n_bins", 10)),
+                       float(ctx.config.definitions["metric_thresholds"]["psi"]["zero_bin_epsilon"]))
+
+    examples = []
+    for idx in example_rows(pd_of[validation.index], spec.shap_examples):
+        row = contributions.loc[idx, challenger.features]
+        top = row.reindex(row.abs().sort_values(ascending=False, kind="stable").index)[:6]
+        examples.append({
+            "id": int(frame.loc[idx, "SK_ID_CURR"]), "pd": float(pd_of[idx]), "target": int(frame.loc[idx, "TARGET"]),
+            "base": float(contributions.loc[idx, "base_value"]),
+            "total": float(contributions.loc[idx, "base_value"] + row.sum()),
+            "top": [(name, frame.loc[idx, name], float(value)) for name, value in top.items()],
+            "rest": float(row.sum() - top.sum()), "n_rest": len(row) - len(top),
+        })
+    (out_dir / "challenger_performance.json").write_text(json.dumps({
+        "performance": performance, "champion": champion_perf, "agreement": agree,
+        "pd_psi_vs_application_test": psi_pd, "examples": examples,
+    }, indent=2, default=str), encoding="utf-8")
+
+    context = {
+        "meta": {**meta, "champion_features": champion["features"]},
+        "performance": performance,
+        "champion": champion_perf,
+        "agreement": agree,
+        "importance": importance,
+        "psi": psi_pd,
+        "examples": examples,
+    }
+    (out_dir / "challenger_report.md").write_text(challenger_report_markdown(challenger, payload, context),
+                                                  encoding="utf-8")
+
+    gini_validation = performance["validation"]["gini"]
+    log.info("  challenger: best of %d trials, %d trees | Gini train %.4f, validation %.4f "
+             "(champion %.4f) | PD PSI vs application_test %.4f",
+             len(challenger.trials), challenger.best_iteration, performance["train"]["gini"], gini_validation,
+             champion_perf["validation"]["gini"], psi_pd["all"])
+    return {
+        "detail": (f"challenger: LightGBM on {len(features)} features, best of {len(challenger.trials)} trials, "
+                   f"{challenger.best_iteration} trees; validation Gini {gini_validation:.4f} "
+                   f"({gini_validation - champion_perf['validation']['gini']:+.4f} vs champion); "
+                   f"fingerprint {payload['fingerprint'][:12]}"),
+        "outputs": [
+            (folder / "challenger.json").relative_to(ctx.settings.data_dir).as_posix(),
+            (folder / "challenger_model.txt").relative_to(ctx.settings.data_dir).as_posix(),
+            scores_path.relative_to(ctx.settings.data_dir).as_posix(),
+            "train/challenger.json",
+            "train/challenger_model.txt",
+            "train/challenger_trials.csv",
+            "train/challenger_importance.csv",
+            "train/challenger_performance.json",
+            "train/challenger_report.md",
+        ],
+    }
 
 
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:

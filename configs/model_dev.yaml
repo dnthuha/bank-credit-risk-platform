@@ -76,8 +76,26 @@ champion:
 
 challenger:
   model: lightgbm
-  early_stopping_rounds: 100
+  # Đầu vào: mọi biến của bảng feature Stage 2.3 (đã qua availability matrix), giá trị gốc.
+  early_stopping_rounds: 100    # trên AUC validation
   max_trials: 30                # không gian tham số nhỏ, mọi cấu hình đều được log
+  num_boost_round: 5000         # trần; early stopping dừng sớm hơn nhiều
+  learning_rate: 0.05
+  # Chọn cấu hình: các trial có AUC validation cách trial tốt nhất <= mức này coi như bằng nhau
+  # (sai số chuẩn của AUC trên ~30k hồ sơ validation cỡ 0.003); trong nhóm đó lấy trial ít
+  # overfit nhất (chênh AUC train - validation nhỏ nhất). Lần chạy đầu: trial tốt nhất chỉ hơn
+  # trial thứ hai 0.0004 AUC nhưng dùng 1295 cây và chênh train - validation 0.094 so với 0.065.
+  selection_tolerance_auc: 0.001
+  # Cố định số luồng: cùng dữ liệu và cấu hình cho cùng cây trên mọi máy (deterministic).
+  num_threads: 4
+  # Lưới nhỏ; max_trials cấu hình được lấy ngẫu nhiên theo seed, không lặp lại.
+  search_space:
+    num_leaves: [15, 31, 63]
+    min_child_samples: [50, 100, 200, 400]
+    feature_fraction: [0.5, 0.7, 0.9]
+    bagging_fraction: [0.7, 0.8, 1.0]
+    bagging_freq: [1]
+    lambda_l2: [0.0, 1.0, 10.0]
 
 calibration:
   methods: [platt, isotonic]

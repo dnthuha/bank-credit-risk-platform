@@ -17,13 +17,14 @@ dependencies = [
     "pyyaml>=6.0",
     "scipy>=1.12",
     "scikit-learn>=1.5",
+    "lightgbm>=4.5",
     "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 # Cài khi tới chặng tương ứng, rồi ghim lại vào requirements.txt.
-modeling = ["lightgbm>=4.5", "shap>=0.46", "matplotlib>=3.8"]  # chặng 3-5
+modeling = ["matplotlib>=3.8"]  # chặng 5; SHAP lấy từ LightGBM (pred_contrib), không cần gói shap
 ews = ["lifelines>=0.29"]                                       # chặng 9
 app = ["streamlit>=1.40"]                                       # chặng 10
 

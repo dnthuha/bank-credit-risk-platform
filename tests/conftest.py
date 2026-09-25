@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -25,11 +26,25 @@ def definitions(project_config):
     return project_config.definitions
 
 
+def quick_config_dir(target: Path) -> Path:
+    """A copy of configs/ whose challenger tries 3 configurations instead of 30.
+
+    Pipeline tests check the wiring, not the search; the real search is covered by
+    test_challenger.py. Everything else is the project's configuration, unchanged.
+    """
+    shutil.copytree(CONFIG_DIR, target)
+    path = target / "model_dev.yaml"
+    model_dev = yaml.safe_load(path.read_text(encoding="utf-8"))
+    model_dev["challenger"]["max_trials"] = 3
+    path.write_text(yaml.safe_dump(model_dev, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return target
+
+
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(
         repo_root=REPO_ROOT,
-        config_dir=CONFIG_DIR,
+        config_dir=quick_config_dir(tmp_path / "configs"),
         data_dir=tmp_path / "data",
         artifacts_dir=tmp_path / "artifacts",
         duckdb_memory_limit="512MB",

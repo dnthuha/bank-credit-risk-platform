@@ -14,7 +14,7 @@ from typing import Any
 from credit_risk.config import ProjectConfig
 from credit_risk.settings import Settings
 
-TRACKED_PACKAGES = ("numpy", "pandas", "pyarrow", "duckdb", "scipy", "scikit-learn", "pyyaml")
+TRACKED_PACKAGES = ("numpy", "pandas", "pyarrow", "duckdb", "scipy", "scikit-learn", "lightgbm", "pyyaml")
 
 
 @dataclass
