@@ -11,6 +11,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 - Cách tải dữ liệu: [data/README.md](data/README.md)
 - Chất lượng dữ liệu: [Home Credit](docs/data_quality_home_credit.md), [Freddie Mac](docs/data_quality_freddie_mac.md)
 - Stage 2, WoE / IV và danh sách biến: [docs/stage2_woe_iv.md](docs/stage2_woe_iv.md)
+- Stage 3, scorecard: [docs/stage3_scorecard.md](docs/stage3_scorecard.md)
 - Định nghĩa nghiệp vụ (single source of truth): [configs/definitions.yaml](configs/definitions.yaml)
 
 ## Trạng thái
@@ -19,7 +20,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 |---|---|---|
 | 1 | Nền móng: repo, môi trường, data contract, định nghĩa, ingest, data validation, test lõi | Dữ liệu thật đã qua validate: Home Credit (135 check, 0 error), Freddie Mac 2012-2025 (0 error) |
 | 2 | WoE / IV, binning, rà soát leakage | **Xong** (tag `v0.2-woe-iv`): 45 biến, bảng bin tái lập được và chỉ học trên train. [Tổng kết](docs/stage2_woe_iv.md) |
-| 3 | Scorecard | |
+| 3 | Scorecard | **Xong**: 32 biến, điểm nguyên (BaseScore 600, odds 50:1, PDO 20), Gini validation 0.515, mã lý do, model card. [Tổng kết](docs/stage3_scorecard.md) |
 | 4 | LightGBM challenger | |
 | 5 | Calibration, đóng băng model | |
 | 6 | Validation engine | |
@@ -58,7 +59,7 @@ python -m credit_risk run --source freddie_mac             # chỉ một nguồn
 | 1 | `ingest` | CSV / TXT thô → parquet đúng kiểu | `data/processed/<source>/*.parquet` |
 | 2 | `validate-data` | Kiểm tra theo data contract; rule `error` fail thì dừng | `artifacts/<run_id>/data_validation/` |
 | 3 | `features` | Split, availability matrix, bảng feature cấp hồ sơ, binning + WoE fit trên train, báo cáo IV, shortlist (M1); panel + biến trễ (M3) còn lại | `data/processed/home_credit/{splits,features}.parquet`, `binning.json`, `shortlist.json`, `artifacts/<run_id>/features/` |
-| 4 | `train` | Scorecard + LightGBM | *stub, chặng 3-4* |
+| 4 | `train` | Scorecard: logistic trên WoE, loại biến sai / không ổn định dấu, quy đổi điểm, mã lý do, model card (M1); LightGBM còn lại | `data/processed/home_credit/{scorecard.json,scores.parquet}`, `artifacts/<run_id>/train/` |
 | 5 | `calibrate` | Platt / isotonic trên calibration sample | *stub, chặng 5* |
 | 6 | `validate-model` | Tính lại độc lập AUC/Gini/KS, PSI, bootstrap | *stub, chặng 6* |
 | 7 | `monitor` | Vintage, roll rate, migration | *stub, chặng 8* |
@@ -83,11 +84,11 @@ bank-credit-risk-platform/
 ├── src/credit_risk/
 │   ├── data/                     # contracts, ingest, validate (DuckDB)
 │   ├── features/                 # split.py, availability.py, build.py, binning.py, iv_report.py, selection.py, woe.py
-│   ├── models/
+│   ├── models/                   # scorecard.py: fit giữ dấu, điểm, mã lý do
 │   ├── validation/               # metrics.py: AUC, Gini, KS, Brier, PSI
 │   ├── monitoring/               # buckets.py, transitions.py (roll rate)
 │   ├── ews/                      # labels.py: nhãn 90+ DPD trong 3 tháng
-│   ├── reporting/
+│   ├── reporting/                # model_card.py
 │   ├── pipeline.py               # 9 bước, run_id, manifest
 │   └── cli.py
 ├── tests/                        # metric, label, data validation, pipeline, config
