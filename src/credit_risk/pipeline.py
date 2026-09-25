@@ -412,6 +412,8 @@ def _train(ctx: RunContext, sources: Sequence[str]) -> None:
         "bands": bands,
         "psi": psi_scores,
         "iv": {name: b.iv for name, b in binnings.items()},
+        "initial_coefficients": initial_coef,
+        "selection_rules": shortlist["spec"],   # the Stage 2.6 rules the shortlist was actually built with
         "contract_mix": {"train": train["NAME_CONTRACT_TYPE"].value_counts(normalize=True).to_dict(),
                          "current": current["NAME_CONTRACT_TYPE"].value_counts(normalize=True).to_dict()},
     }

@@ -84,7 +84,7 @@ def model_card_markdown(card: Scorecard, payload: dict[str, Any], context: dict[
         "",
         f"- Hồi quy logistic trên WoE, L2 (C = {spec.C:g}), fit bằng scikit-learn.",
         f"- Đầu vào: {meta['shortlisted']} biến của shortlist Stage 2.6; **{len(card.features)} biến giữ lại** sau "
-        f"kiểm tra dấu hệ số (mục 6).",
+        "kiểm tra dấu hệ số (mục 5).",
         f"- Thang điểm: Score = Offset + Factor x ln(odds Good:Bad); BaseScore {spec.base_score:g} tại odds "
         f"{spec.base_odds:g}:1, PDO {spec.pdo:g} -> Factor {spec.factor:.4f}, Offset {spec.offset:.4f}.",
         f"- Điểm mỗi bin làm tròn thành số nguyên; điểm cơ sở (intercept) = **{card.base_points}**. "
@@ -116,41 +116,61 @@ def model_card_markdown(card: Scorecard, payload: dict[str, Any], context: dict[
         lines.append(f"| {r.band} | {r.score_min:.0f} - {r.score_max:.0f} | {r.n:,} | {r.bad_rate:.2%} | "
                      f"{r.pd_mean:.2%} |")
 
-    lines += [
-        "",
-        "## 5. Biến và điểm",
-        "",
-        "| # | Biến | IV train | Hệ số | Âm trong bootstrap | Điểm thấp nhất | Điểm cao nhất |",
-        "|---:|---|---:|---:|---:|---:|---:|",
-    ]
-    order = sorted(card.features, key=lambda f: -(max(card.points[f].values()) - min(card.points[f].values())))
-    for i, f in enumerate(order, 1):
-        pts = card.points[f].values()
-        lines.append(f"| {i} | `{f}` | {context['iv'].get(f, float('nan')):.4f} | {card.coefficients[f]:.4f} | "
-                     f"{payload['sign_share'][f]:.0%} | {min(pts)} | {max(pts)} |")
-    lines += ["", "Xếp theo độ rộng khoảng điểm. Bảng điểm đầy đủ theo bin: `scorecard_table.csv`."]
-
     trail = payload["dropped_for_sign"]
+    rules = context["selection_rules"]
     lines += [
         "",
-        "## 6. Biến bị loại vì dấu hệ số",
+        "## 5. Chọn biến: tiêu chí và kết quả",
         "",
-        f"Hệ số trên WoE phải **âm** (bin nhiều good hơn thì ít rủi ro hơn). Mỗi vòng fit lại "
-        f"{spec.bootstrap_resamples} lần trên bootstrap phân tầng của train; biến có hệ số âm trong dưới "
-        f"{spec.min_sign_share:.0%} số lần bị loại, mỗi vòng một biến (biến kém ổn định nhất).",
+        "### 5.1 Tiêu chí giữ lại",
         "",
+        "Một biến vào scorecard khi đạt **cả ba** tiêu chí:",
+        "",
+        "| # | Tiêu chí | Ngưỡng | Kiểm ở |",
+        "|---:|---|---|---|",
+        f"| 1 | Qua shortlist Stage 2.6 | IV train >= {rules['iv_min']:g}; không có cờ ngoài mẫu của 2.5; "
+        f"\\|r\\| WoE <= {rules['max_abs_correlation']:g} với biến IV cao hơn; VIF <= {rules['max_vif']:g} | "
+        "`features/shortlist.md` |",
+        "| 2 | Hệ số trên WoE **âm** | < 0 (WoE = ln(%Good / %Bad): bin nhiều good hơn phải ít rủi ro hơn) | "
+        "mô hình fit trên toàn bộ train |",
+        f"| 3 | Dấu hệ số **ổn định** | âm trong >= {spec.min_sign_share:.0%} của {spec.bootstrap_resamples} lần "
+        "fit lại trên bootstrap phân tầng của train | cùng vòng với tiêu chí 2 |",
+        "",
+        "Tiêu chí 2 và 3 được kiểm theo vòng: mỗi vòng fit lại với các biến còn lại, loại **một** biến kém "
+        "ổn định nhất (tỷ lệ âm thấp nhất; hoà thì hệ số lớn hơn), rồi fit lại, đến khi mọi biến đều đạt. "
+        "Loại từng biến một vì bỏ một biến có thể làm dấu của biến tương quan với nó đổi theo.",
+        "",
+        f"### 5.2 Kết quả: {len(card.features)} giữ, {len(trail)} loại trên {meta['shortlisted']} biến của shortlist",
+        "",
+        "| # | Biến | IV train | Hệ số (đủ biến) | Hệ số (cuối / lúc loại) | Âm trong bootstrap | Khoảng điểm | "
+        "Kết quả | Lý do |",
+        "|---:|---|---:|---:|---:|---:|---|---|---|",
     ]
-    if trail:
-        lines += ["| Vòng | Biến | Hệ số | Âm trong bootstrap | Lý do |", "|---:|---|---:|---:|---|"]
-        for r in trail:
-            lines.append(f"| {r['round']} | `{r['feature']}` | {r['coefficient']:.4f} | {r['negative_share']:.0%} | "
-                         f"{r['reason'].split(' (')[0]} |")
-    else:
-        lines.append("Không biến nào bị loại.")
+    initial = context["initial_coefficients"]
+    kept = sorted(card.features, key=lambda f: (-(max(card.points[f].values()) - min(card.points[f].values())), f))
+    rows = []
+    for f in kept:
+        pts = card.points[f].values()
+        rows.append((f, card.coefficients[f], payload["sign_share"][f], f"{min(pts)} .. {max(pts)}", "**Giữ**",
+                     "đạt cả ba tiêu chí"))
+    for r in trail:
+        why = ("hệ số dương: ngược chiều với chính các bin của nó" if r["coefficient"] > 0
+               else f"hệ số âm nhưng không ổn định (dưới {spec.min_sign_share:.0%})")
+        rows.append((r["feature"], r["coefficient"], r["negative_share"], "", f"Loại (vòng {r['round']})", why))
+    for i, (f, coef, share, pts, decision, why) in enumerate(rows, 1):
+        lines.append(f"| {i} | `{f}` | {context['iv'].get(f, float('nan')):.4f} | {initial.get(f, float('nan')):+.4f} | "
+                     f"{coef:+.4f} | {share:.0%} | {pts} | {decision} | {why} |")
+    lines += [
+        "",
+        "- *Hệ số (đủ biến)*: vòng 1, khi cả shortlist cùng trong mô hình. *Hệ số (cuối / lúc loại)*: mô hình cuối "
+        "với biến được giữ, vòng bị loại với biến bị loại. Tỷ lệ âm trong bootstrap đọc theo cùng mô hình đó.",
+        "- Biến giữ xếp theo độ rộng khoảng điểm (biến ảnh hưởng score nhiều nhất lên trước); biến loại xếp "
+        "theo vòng. Bảng điểm đầy đủ theo bin: `scorecard_table.csv`; lịch sử loại: `sign_trail.csv`.",
+    ]
 
     lines += [
         "",
-        "## 7. Thuộc tính nhạy cảm (PROJECT_SCOPE #7)",
+        "## 6. Thuộc tính nhạy cảm (PROJECT_SCOPE #7)",
         "",
         "Không loại theo chính sách: ba thuộc tính dưới đây vào mô hình theo cùng tiêu chí thống kê như mọi biến.",
         "",
@@ -174,7 +194,7 @@ def model_card_markdown(card: Scorecard, payload: dict[str, Any], context: dict[
         "tình trạng hôn nhân và nhóm tuổi (`validation.yaml` -> `fairness_review`), kể cả khi thuộc tính "
         "không còn trong scorecard: biến khác vẫn có thể mang thông tin thay cho nó.",
         "",
-        "## 8. Giới hạn",
+        "## 7. Giới hạn",
         "",
         "- **Không có out-of-time thật**: Home Credit không có ngày nộp đơn; split là stratified random, nên "
         "hiệu năng ở đây lạc quan hơn khi dùng trên một giai đoạn sau.",
