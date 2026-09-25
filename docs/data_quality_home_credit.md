@@ -1,8 +1,14 @@
 # Chất lượng dữ liệu — Home Credit Default Risk
 
-Tài liệu này tóm tắt cấu trúc, chất lượng và những giới hạn cần lưu ý của bộ dữ liệu
-Home Credit trước khi tạo feature, binning và tính PSI. Kết quả được lập từ dữ liệu gốc
+Tài liệu này giúp đội dự án hiểu dữ liệu Home Credit trước khi tạo feature, binning và
+đánh giá độ ổn định bằng PSI. Nội dung tập trung vào cấu trúc bảng, các bất thường có thể
+ảnh hưởng đến mô hình, và cách xử lý đã thống nhất; không chỉ là kết quả kiểm tra kỹ thuật.
+Kết quả được lập từ dữ liệu gốc
 ngày **2026-09-18**.
+
+> **Cách đọc nhanh:** `SK_ID_CURR` là khóa cấp hồ sơ hiện tại và là đường an toàn để tổng hợp lịch sử.
+> “Leakage” là thông tin chỉ xuất hiện sau thời điểm ra quyết định; PSI cho biết phân phối dữ liệu đã đổi
+> bao nhiêu giữa hai population, chứ không tự nó chứng minh có drift theo thời gian.
 
 ## 1. Kết luận nhanh
 
@@ -20,12 +26,12 @@ ngày **2026-09-18**.
   theo thời gian.
 
 Kết quả validation là **PASS**, nhưng không có nghĩa mọi giá trị trong dữ liệu gốc đều
-hoàn hảo. Contract tập trung vào khóa, target, ngày tương đối và các trường có rule quan
-trọng; các bất thường nghiệp vụ đã biết vẫn phải được xử lý ở bước tạo feature.
+hoàn hảo. Data contract kiểm tra khóa, target, ngày tương đối và các trường có rule quan
+trọng. Các bất thường nghiệp vụ đã biết vẫn cần được xử lý khi tạo feature.
 
-## 2. Cách đọc mô hình dữ liệu
+## 2. Mô hình dữ liệu: cách các bảng liên kết với nhau
 
-### 2.1. Ba loại định danh
+### 2.1. Ba loại định danh cần nhớ
 
 - `SK_ID_CURR`: hồ sơ vay hiện tại trong `application_train` hoặc `application_test`.
   Đây là khóa để đưa feature lịch sử về cấp hồ sơ chấm điểm.
@@ -55,7 +61,7 @@ flowchart LR
     P -.->|SK_ID_PREV, quan hệ không đầy đủ| IP
 ```
 
-### 2.2. Quy ước thời gian
+### 2.2. Quy ước thời gian và nguy cơ leakage
 
 Các cột `DAYS_*` và `MONTHS_BALANCE` là thời gian tương đối so với ngày nộp hồ sơ hiện
 tại:
@@ -71,7 +77,7 @@ Ngược lại, `DAYS_CREDIT_UPDATE > 0` là thông tin được cập nhật tr
 
 Giá trị `365243` (xấp xỉ 1,000 năm) là mã “không áp dụng”, không phải số ngày thực tế.
 
-## 3. Danh mục và mô tả từng bảng
+## 3. Danh mục bảng dữ liệu
 
 | Bảng | Số dòng | Số cột | Một dòng đại diện cho | Khóa |
 |---|---:|---:|---|---|
@@ -86,9 +92,9 @@ Giá trị `365243` (xấp xỉ 1,000 năm) là mã “không áp dụng”, kh�
 
 ### 3.1. `application_train`
 
-Đây là bảng trung tâm để phát triển mô hình. Mỗi dòng là một hồ sơ vay hiện tại và chỉ
-bảng này có `TARGET`: `1` biểu thị khách hàng gặp khó khăn thanh toán theo định nghĩa
-của bộ dữ liệu, `0` là các trường hợp còn lại.
+Đây là bảng trung tâm để phát triển mô hình. Mỗi dòng là một hồ sơ vay hiện tại, và chỉ
+bảng này có `TARGET`: `1` là khách hàng gặp khó khăn thanh toán theo định nghĩa của bộ dữ
+liệu, `0` là các trường hợp còn lại.
 
 122 cột bao phủ thông tin nhân khẩu học, thu nhập và việc làm, đặc điểm khoản vay hiện
 tại, nhà ở và tài sản, thông tin liên hệ, giấy tờ cung cấp, số lần tra cứu credit bureau
@@ -100,9 +106,9 @@ xem là một nhóm riêng; các biến `EXT_SOURCE_*` có tỷ lệ thiếu r�
 
 ### 3.2. `application_test`
 
-Bảng có cùng grain và gần như cùng schema với `application_train`, nhưng không có
-`TARGET` nên còn 121 cột. Trong dự án này, bảng được dùng làm population “hiện tại” để
-so sánh PSI, không dùng để huấn luyện hoặc đánh giá supervised.
+Bảng có cùng cấp độ dữ liệu và gần như cùng schema với `application_train`, nhưng không
+có `TARGET` nên còn 121 cột. Trong dự án này, bảng đại diện cho population “hiện tại” để
+so sánh PSI; nó không được dùng để huấn luyện hoặc đánh giá mô hình có giám sát.
 
 Cần thận trọng khi diễn giải: đây là test split của cuộc thi Kaggle, không phải một lát
 cắt thời gian độc lập. Tỷ trọng `Revolving loans` chỉ 0.9%, so với 9.5% trong train; PSI
@@ -202,8 +208,8 @@ phải gắn cờ riêng thay vì mặc định là khách hàng đã trả 0.
 | Warnings | 1 |
 | Trạng thái | **PASS** |
 
-Các checks bao gồm số dòng tối thiểu, kiểu dữ liệu, tính duy nhất và null của khóa, miền
-giá trị, tỷ lệ thiếu và foreign key qua `SK_ID_CURR`. Warning duy nhất:
+Các phép kiểm tra bao gồm số dòng tối thiểu, kiểu dữ liệu, tính duy nhất và null của khóa,
+miền giá trị, tỷ lệ thiếu và foreign key qua `SK_ID_CURR`. Warning duy nhất là:
 
 | Bảng | Cột | Vi phạm | Quy mô | Hướng xử lý |
 |---|---|---|---:|---|
@@ -216,10 +222,10 @@ Tài liệu liên quan:
 - Data dictionary gốc (có sau khi tải dữ liệu):
   `data/raw/home_credit/HomeCredit_columns_description.csv`
 
-## 5. Các vấn đề đã biết của dữ liệu gốc
+## 5. Các vấn đề đã biết và cách xử lý
 
-Đây là đặc điểm của dữ liệu nguồn, không phải lỗi ingest. Việc xử lý được thực hiện ở
-bước tạo feature và phải được ghi lại để kết quả có thể tái lập.
+Đây là đặc điểm của dữ liệu nguồn, không phải lỗi ingest. Cách xử lý được áp dụng ở bước
+tạo feature và cần được ghi lại để kết quả có thể tái lập.
 
 | Vấn đề | Quy mô | Rủi ro | Cách xử lý đề xuất |
 |---|---:|---|---|
@@ -235,7 +241,7 @@ nộp hồ sơ:
 - `bureau.DAYS_CREDIT_ENDDATE > 0`: 602,603 dòng;
 - `previous_application.DAYS_LAST_DUE_1ST_VERSION > 0`: 224,392 dòng.
 
-## 6. Hệ quả đối với feature engineering và binning
+## 6. Điều cần áp dụng khi tạo feature và binning
 
 1. **Giữ riêng nhóm `DAYS_EMPLOYED = 365243`.** Có 55,374 hồ sơ train (18%), gồm
    55,352 `Pensioner` và 22 `Unemployed`; `ORGANIZATION_TYPE = XNA` xuất hiện đúng trên
@@ -259,7 +265,7 @@ nộp hồ sơ:
    dòng và `credit_card_balance.AMT_BALANCE < 0` có 2,345 dòng. Đây có thể là trạng
    thái trả dư; cần kiểm tra ý nghĩa trước khi clip hoặc loại.
 
-## 7. Hệ quả đối với PSI
+## 7. Diễn giải PSI đúng ngữ cảnh
 
 Cơ cấu loại hợp đồng giữa hai population khác nhau rõ rệt:
 
@@ -268,20 +274,21 @@ Cơ cấu loại hợp đồng giữa hai population khác nhau rõ rệt:
 | Cash loans | 90.5% | 99.1% |
 | Revolving loans | 9.5% | 0.9% |
 
-Vì `application_test` được chọn làm population “hiện tại”, báo cáo PSI cần:
+Vì `application_test` được chọn làm population “hiện tại”, báo cáo PSI cần tách bạch
+khác biệt cơ cấu mẫu với thay đổi thực sự theo thời gian:
 
 - trình bày PSI tổng thể và PSI tách theo `NAME_CONTRACT_TYPE`;
 - chỉ rõ đây là khác biệt cơ cấu mẫu của Kaggle khi một biến hoặc score vượt ngưỡng;
 - tránh kết luận model không ổn định theo thời gian nếu chưa có một tập quan sát thực sự
   thuộc giai đoạn muộn hơn để đối chứng.
 
-## 8. Phát hiện từ Stage 2.5: độ ổn định của feature
+## 8. Phát hiện ở Stage 2.5: độ ổn định của feature
 
 Bin học trên train, áp nguyên xi sang validation và `application_test`
 (run `20260922T150931Z-a69cb073`, báo cáo `artifacts/<run_id>/features/iv_report.md`).
 
-**`bureau_balance` có mặt rất khác nhau giữa hai population.** Đây là cách Kaggle chuẩn bị
-dữ liệu, không phải đặc điểm của khách hàng:
+**`bureau_balance` xuất hiện rất khác nhau giữa hai population.** Đây là khác biệt trong
+cách Kaggle chuẩn bị dữ liệu, không phải đặc điểm của khách hàng:
 
 | Trong số hồ sơ có bureau | Train | `application_test` |
 |---|---:|---:|

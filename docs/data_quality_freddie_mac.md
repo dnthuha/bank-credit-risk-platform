@@ -1,8 +1,13 @@
 # Chất lượng dữ liệu — Freddie Mac Single-Family Loan-Level Dataset (sample)
 
-Tài liệu này tóm tắt cấu trúc, chất lượng và những giới hạn cần lưu ý của bộ dữ liệu
-Freddie Mac trước khi dựng panel, portfolio monitoring (Stage 8) và Early Warning System
-(Stage 9). Kết quả được lập từ dữ liệu gốc ngày **2026-09-19**.
+Tài liệu này giải thích cách đọc và sử dụng dữ liệu Freddie Mac trước khi dựng panel,
+portfolio monitoring (Stage 8) và Early Warning System (Stage 9). Trọng tâm là những điều
+có thể làm sai phân tích nếu bỏ qua: thời điểm quan sát, panel bị cắt trái, sự kiện hiếm và
+prepayment. Kết quả được lập từ dữ liệu gốc ngày **2026-09-19**.
+
+> **Cách đọc nhanh:** một khoản vay có một dòng lúc giải ngân và nhiều dòng theo tháng.
+> `loan_age` là số tháng kể từ giải ngân (MOB); prepayment kết thúc khả năng quan sát default
+> nên phải được xem là competing risk, không phải một khoản vay “an toàn” mãi mãi.
 
 ## 1. Kết luận nhanh
 
@@ -13,16 +18,16 @@ Freddie Mac trước khi dựng panel, portfolio monitoring (Stage 8) và Early 
   nhận bằng dữ liệu (xem mục 2.3).
 - Panel rất sạch: tháng liên tục (trừ 3 khoản), mỗi khoản có tối đa một dòng zero balance
   và không có dòng nào sau đó.
-- EWS là bài toán **sự kiện cực hiếm**: tỷ lệ chạm 90+ DPD trong 3 tháng khoảng **0.12%**
-  ở giai đoạn train và **0.25%** ở out-of-time, thấp hơn nhiều mức 0.5-2% thường gặp.
+- EWS là bài toán **sự kiện cực hiếm**: tỷ lệ lần đầu chạm 90+ DPD trong 3 tháng khoảng
+  **0.12%** ở giai đoạn train và **0.25%** ở out-of-time, thấp hơn nhiều mức 0.5-2% thường gặp.
 - COVID được xác nhận bằng số liệu: tỷ lệ dòng 90+ tăng từ khoảng 0.3% lên **1.7-2.0%**
   trong 2020-2021.
 - Trả trước chiếm áp đảo (71-82% khoản của lứa 2012-2019), trong khi thanh lý dưới 1%:
   prepayment là competing risk chính.
 
-## 2. Cách đọc mô hình dữ liệu
+## 2. Mô hình dữ liệu và quy ước thời gian
 
-### 2.1. Hai bảng và một định danh
+### 2.1. Hai bảng, một khoản vay
 
 ```mermaid
 flowchart LR
@@ -36,14 +41,15 @@ flowchart LR
 định giải ngân quý 1/2012.
 
 **Lứa (vintage) phải lấy từ `loan_id`**, không lấy từ `first_payment_date`: ở mọi lứa,
-khoảng 16% khoản vay trả kỳ đầu vào năm sau năm giải ngân.
+khoảng 16% khoản vay trả kỳ đầu vào năm sau năm giải ngân. Nếu dùng ngày trả kỳ đầu,
+cùng một lứa giải ngân sẽ bị tách sai sang hai năm.
 
 ### 2.2. Quy ước thời gian
 
 - `period`: tháng báo cáo, lưu dưới dạng ngày 01 của tháng.
 - `loan_age`: số tháng kể từ khi giải ngân (MOB). **Dùng cột này cho vintage curve**,
-  không đếm số dòng: 60,849 khoản (8.7%) xuất hiện lần đầu khi `loan_age > 0`, tức panel
-  bị cắt trái (left truncation).
+  không đếm số dòng. Có 60,849 khoản (8.7%) xuất hiện lần đầu khi `loan_age > 0`, nghĩa là
+  phần đầu lịch sử không có trong dữ liệu (panel bị cắt trái, hay left truncation).
 - Dữ liệu tháng kết thúc ở **2026-03**. Nhãn EWS cần t+1..t+3, nên tháng quan sát cuối
   cùng có nhãn đầy đủ là **2025-12**.
 
@@ -56,7 +62,7 @@ nhau hoàn toàn:
 - 47,975 / 48,005 khoản thiếu `orig_dti` là HARP (HARP không yêu cầu DTI);
 - 12,356 khoản HARP có LTV > 100% (cao nhất 684%), so với chỉ 8 khoản không HARP.
 
-## 3. Danh mục và mô tả từng bảng
+## 3. Danh mục bảng dữ liệu
 
 | Bảng | Số dòng | Số cột | Một dòng đại diện cho | Khóa |
 |---|---:|---:|---|---|
@@ -106,9 +112,9 @@ Trạng thái hằng tháng: dư nợ, `delinquency_status`, `loan_age`, sửa �
 người vay (forbearance, repayment plan), trả chậm do thiên tai, và sự kiện kết thúc
 (`zero_balance_code`) cùng các khoản thu hồi / chi phí khi thanh lý.
 
-`delinquency_status`: `00` current, `01` 30-59 ngày, `02` 60-89 ngày, `03` trở lên là
-90+ (số tháng quá hạn, cao nhất quan sát được là 88), `RA` REO acquisition (5,449 dòng),
-`XX` không rõ trạng thái (13,627 dòng, đổi thành NULL khi ingest).
+`delinquency_status`: `00` là đang trả đúng hạn; `01` là 30-59 ngày; `02` là 60-89 ngày;
+`03` trở lên là 90+ ngày quá hạn (số tháng quá hạn, cao nhất quan sát được là 88). `RA` là
+REO acquisition (5,449 dòng); `XX` là không rõ trạng thái (13,627 dòng, đổi thành NULL khi ingest).
 
 `zero_balance_code` (số khoản vay):
 
@@ -139,7 +145,7 @@ Contract ở `configs/data_contracts/freddie_mac.yaml`. Báo cáo đầy đủ c
 Rule duy nhất còn ở mức `warn` là miền giá trị của `vantagescore4`: cột này trống ở cả 14
 lứa nên rule chưa từng được kiểm trên dữ liệu thật.
 
-## 5. Các vấn đề đã biết của dữ liệu gốc
+## 5. Các vấn đề đã biết và cách xử lý
 
 | Vấn đề | Quy mô | Rủi ro | Cách xử lý |
 |---|---:|---|---|
@@ -149,7 +155,7 @@ lứa nên rule chưa từng được kiểm trên dữ liệu thật.
 | `remaining_months_to_maturity = -1` | 9 dòng | Không đáng kể | Clip về 0 nếu dùng làm feature |
 | `current_upb = 0` khi chưa zero balance | 2 dòng | Không đáng kể | Giữ nguyên; không dùng để suy ra tất toán |
 
-## 6. Hệ quả đối với monitoring và EWS
+## 6. Điều cần áp dụng cho monitoring và EWS
 
 1. **Lứa lấy từ `loan_id`, MOB lấy từ `loan_age`** (mục 2.1 và 2.2). Với survival
    analysis, khoản xuất hiện muộn phải được xử lý như delayed entry.
@@ -180,8 +186,8 @@ lứa nên rule chưa từng được kiểm trên dữ liệu thật.
    | 2025 | 0.14% | 7.4% | 0.00% | 0.13% | 92.5% |
 
    Các lứa có độ dài lịch sử khác nhau (từ 170 tháng xuống 14 tháng), nên **không so
-   sánh cột "Từng 90+" giữa các lứa**; so sánh đúng phải ở cùng MOB (vintage curve,
-   Stage 8).
+   sánh trực tiếp cột "Từng 90+" giữa các lứa**. So sánh đúng phải đặt các khoản vay ở
+   cùng MOB trên vintage curve (Stage 8).
 5. **COVID tạo ra phần lớn số ca 90+ của các lứa 2016-2019.** Tỷ lệ khoản từng chạm 90+
    *trước 2020-03*: lứa 2016 1.09%, 2017 1.08%, 2018 0.47%, 2019 0.10%, so với 4.7-5.8%
    khi tính cả giai đoạn COVID.
@@ -198,11 +204,11 @@ lứa nên rule chưa từng được kiểm trên dữ liệu thật.
    Quyết định coi 2020-03 → 2021-12 là stress segment (PROJECT_SCOPE, quyết định #3) được
    dữ liệu ủng hộ. Mức 90+ sau COVID vẫn cao hơn trước COVID và đang tăng nhẹ từ 2024.
 
-## 7. Hệ quả đối với thiết kế EWS
+## 7. Hàm ý cho thiết kế EWS
 
-Ước tính sơ bộ tỷ lệ sự kiện "lần đầu chạm 90+ hoặc thanh lý trong t+1..t+3", trên các
-tháng-khoản vay đang hoạt động và chưa 90+ tại t. Hàm gán nhãn chính thức nằm ở
-`credit_risk.ews.labels` và có thể cho con số hơi khác.
+Ước tính sơ bộ dưới đây đo sự kiện "lần đầu chạm 90+ hoặc thanh lý trong t+1..t+3" trên
+các cặp tháng-khoản vay còn hoạt động và chưa 90+ tại t. Hàm gán nhãn chính thức nằm ở
+`credit_risk.ews.labels`, vì vậy kết quả chính thức có thể chênh nhẹ so với bảng này.
 
 | Đoạn (theo `configs/ews.yaml`) | Tháng-khoản vay | Sự kiện | Tỷ lệ |
 |---|---:|---:|---:|

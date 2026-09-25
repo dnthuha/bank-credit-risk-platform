@@ -1,18 +1,23 @@
 # Stage 2: WoE, IV và danh sách biến (Home Credit)
 
-Tổng kết Stage 2 của roadmap: EDA và rà soát leakage, binning, bảng WoE / IV, danh sách biến
-rút gọn. Mọi con số trong tài liệu này lấy từ lần chạy chính thức
+Đây là chặng biến dữ liệu thô thành tập biến có thể giải thích cho scorecard. Tài liệu ghi lại
+cách dự án kiểm soát leakage, tạo bin, đo sức mạnh từng biến và chọn danh sách biến ban đầu.
+Mọi con số dưới đây lấy từ lần chạy chính thức
 `20260922T160241Z-dc55d541` (commit `ebb03d0`, working tree sạch).
+
+> **Cách đọc nhanh:** WoE cho biết một nhóm giá trị nghiêng về khách hàng tốt hay xấu; IV đo mức
+> phân biệt của biến; PSI đo mức thay đổi phân phối giữa hai tập. Các bin và shortlist chỉ được học
+> từ train, rồi mới kiểm tra trên các tập còn lại.
 
 ## 1. Kết luận nhanh
 
-- **Definition of Done đạt**: bảng bin tái lập được và chỉ học trên train (mục 5).
+- **Hoàn thành tiêu chí Stage 2**: bảng bin tái lập được và chỉ học trên train (mục 5).
 - 307,511 hồ sơ train được chia 60 / 10 / 15 / 15; bad rate 8.07% ở cả bốn phần.
 - 339 cột được phân loại theo thời điểm có mặt; bảng feature cấp hồ sơ có 192 biến.
 - Binning học trên 184,507 hồ sơ train; không biến nào có IV vượt ngưỡng nghi leakage 0.5.
 - **45 biến được chọn** cho scorecard; mỗi biến bị loại đều có bước và lý do.
 
-## 2. Các bước
+## 2. Quy trình và đầu ra
 
 | Bước | Làm gì | Đầu ra chính | Kết quả |
 |---|---|---|---|
@@ -26,7 +31,7 @@ rút gọn. Mọi con số trong tài liệu này lấy từ lần chạy chính
 Số biến bị loại ở mỗi tầng của 2.6: IV < 0.02: 104; cờ từ 2.5: 3;
 tương quan: 40; VIF: 0; chính sách: 0.
 
-## 3. Các quyết định đã chốt ở Stage 2
+## 3. Những quyết định quan trọng
 
 | Quyết định | Lý do | Ghi ở |
 |---|---|---|
@@ -36,10 +41,11 @@ tương quan: 40; VIF: 0; chính sách: 0.
 | Không loại thuộc tính nhạy cảm theo chính sách | Quyết định của chủ project | PROJECT_SCOPE #7 |
 | Tổng / trung bình số thực tính bằng DECIMAL chính xác | Phép cộng số thực phụ thuộc thứ tự dòng: sau khi ingest lại, một hồ sơ nhảy bin | `features/build.py` |
 
-**Về quyết định thuộc tính nhạy cảm:** `CODE_GENDER`, `NAME_FAMILY_STATUS` và `DAYS_BIRTH` nằm trong
-danh sách 45 biến. Scorecard sẽ cho điểm khác nhau theo giới tính (nam WoE -0.25) và tình trạng hôn
-nhân (độc thân -0.21). Model card ở Stage 3 phải nêu rủi ro này, và Module 2 phải báo cáo hiệu năng
-theo ba nhóm (`validation.yaml`, `fairness_review`).
+**Lưu ý về thuộc tính nhạy cảm:** `CODE_GENDER`, `NAME_FAMILY_STATUS` và `DAYS_BIRTH` vẫn nằm trong
+danh sách 45 biến theo quyết định phạm vi dự án. Vì vậy, scorecard có thể cho điểm khác nhau theo giới
+tính (nam WoE -0.25) và tình trạng hôn nhân (độc thân -0.21). Đây không phải chi tiết kỹ thuật nhỏ:
+model card ở Stage 3 phải nêu rủi ro này, và Module 2 phải báo cáo hiệu năng theo ba nhóm
+(`validation.yaml`, `fairness_review`).
 
 ## 4. Danh sách 45 biến
 
@@ -93,20 +99,22 @@ Theo nhóm: Hồ sơ hiện tại 19, Bureau 7, Hồ sơ vay cũ 6, Lịch trả
 | 44 | `PREV_COUNT_12M` | Hồ sơ vay cũ | tăng | 0.0204 | 0.0401 | 0.0419 |
 | 45 | `NAME_FAMILY_STATUS` | Hồ sơ hiện tại | theo bad rate | 0.0202 | 0.0167 | 0.0030 |
 
-"Xu hướng" là chiều của bad rate khi giá trị tăng; với biến categorical, các nhóm được xếp theo bad rate.
-IV validation tính trên các bin cố định từ train; với mẫu 30,750 hồ sơ, IV của biến yếu bị nhiễu đẩy lên,
-nên giá trị cao hơn train không có nghĩa biến mạnh hơn ngoài mẫu.
+"Xu hướng" là chiều thay đổi của bad rate khi giá trị tăng; với biến categorical, các nhóm được xếp theo
+bad rate. IV ở validation dùng nguyên các bin đã học từ train. Vì validation chỉ có 30,750 hồ sơ, IV của
+biến yếu có thể cao hơn train do nhiễu mẫu; điều đó không tự động chứng minh biến mạnh hơn ngoài mẫu.
 
-## 5. Definition of Done: bằng chứng
+## 5. Bằng chứng hoàn thành
 
 Tiêu chí của overview: **"Bảng bin tái lập được và chỉ học trên train."**
 
-**Chỉ học trên train** - `tests/test_stage2_dod.py` chạy chuỗi lệnh thật (ingest -> validate-data -> features):
+**Binning chỉ học từ train.** `tests/test_stage2_dod.py` chạy chuỗi lệnh thật
+(`ingest -> validate-data -> features`) và xác nhận:
 
 - sửa mọi hồ sơ ngoài train (validation, calibration, test) và toàn bộ application_test: fingerprint bảng bin **không đổi**;
 - sửa đúng như vậy trên 5 hồ sơ train: fingerprint **đổi** (đối chứng: phép kiểm tra đủ nhạy).
 
-**Tái lập được** - hai lần chạy toàn bộ pipeline từ commit `ebb03d0`, mỗi lần ingest lại từ đầu:
+**Kết quả tái lập được.** Hai lần chạy toàn bộ pipeline từ commit `ebb03d0`, mỗi lần ingest lại từ đầu,
+cho cùng các fingerprint sau:
 
 | Run | Split | Binning | Shortlist |
 |---|---|---|---|
@@ -117,9 +125,10 @@ Hai lỗi tái lập đã được phát hiện và sửa trên đường đi, c
 tự: lần đầu trong một lần chạy (DuckDB cộng song song), lần hai qua các lần ingest (thứ tự dòng đổi).
 Cách sửa cuối cùng là cộng bằng DECIMAL chính xác, có test xáo trộn thứ tự dòng và đổi số luồng.
 
-## 6. Chuyển sang Stage 3
+## 6. Bàn giao cho Stage 3
 
-Stage 3 (scorecard) đọc `data/processed/home_credit/binning.json` và `shortlist.json`. Còn phải làm ở đó:
+Stage 3 (scorecard) đọc `data/processed/home_credit/binning.json` và `shortlist.json`. Các việc còn lại
+ở chặng kế tiếp là:
 
 - hồi quy logistic trên WoE của 45 biến, kiểm tra dấu hệ số (`require_stable_coefficient_sign`);
   biến có dấu ngược hoặc không ổn định bị loại tiếp;
