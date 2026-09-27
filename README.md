@@ -13,6 +13,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 - Stage 2, WoE / IV và danh sách biến: [docs/stage2_woe_iv.md](docs/stage2_woe_iv.md)
 - Stage 3, scorecard: [docs/stage3_scorecard.md](docs/stage3_scorecard.md)
 - Stage 4, LightGBM challenger: [docs/stage4_lightgbm.md](docs/stage4_lightgbm.md)
+- Stage 5, calibration và model package: [docs/stage5_calibration.md](docs/stage5_calibration.md)
 - Định nghĩa nghiệp vụ (single source of truth): [configs/definitions.yaml](configs/definitions.yaml)
 
 ## Trạng thái
@@ -22,8 +23,8 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 | 1 | Nền móng: repo, môi trường, data contract, định nghĩa, ingest, data validation, test lõi | Dữ liệu thật đã qua validate: Home Credit (135 check, 0 error), Freddie Mac 2012-2025 (0 error) |
 | 2 | WoE / IV, binning, rà soát leakage | **Xong** (tag `v0.2-woe-iv`): 45 biến, bảng bin tái lập được và chỉ học trên train. [Tổng kết](docs/stage2_woe_iv.md) |
 | 3 | Scorecard | **Xong**: 32 biến, điểm nguyên (BaseScore 600, odds 50:1, PDO 20), Gini validation 0.515, mã lý do, model card. [Tổng kết](docs/stage3_scorecard.md) |
-| 4 | LightGBM challenger | |
-| 5 | Calibration, đóng băng model | |
+| 4 | LightGBM challenger | **Xong**: 192 biến, 30 cấu hình có log, SHAP; Gini validation 0.580 (+0.064 so với champion, lạc quan). [Tổng kết](docs/stage4_lightgbm.md) |
+| 5 | Calibration, đóng băng model | **Xong**: Platt cho cả hai mô hình (chọn bằng CV), slope validation 1.00 / 1.01; model package fingerprint `35e42a5f208b`. [Tổng kết](docs/stage5_calibration.md) |
 | 6 | Validation engine | |
 | 7 | Validation report tự động | |
 | 8 | Portfolio monitoring | |
@@ -61,7 +62,7 @@ python -m credit_risk run --source freddie_mac             # chỉ một nguồn
 | 2 | `validate-data` | Kiểm tra theo data contract; rule `error` fail thì dừng | `artifacts/<run_id>/data_validation/` |
 | 3 | `features` | Split, availability matrix, bảng feature cấp hồ sơ, binning + WoE fit trên train, báo cáo IV, shortlist (M1); panel + biến trễ (M3) còn lại | `data/processed/home_credit/{splits,features}.parquet`, `binning.json`, `shortlist.json`, `artifacts/<run_id>/features/` |
 | 4 | `train` | Scorecard: logistic trên WoE, loại biến sai / không ổn định dấu, quy đổi điểm, mã lý do, model card; LightGBM challenger: 30 cấu hình, early stopping, SHAP, so với champion (M1) | `data/processed/home_credit/{scorecard.json,scores.parquet,challenger.json,challenger_model.txt,challenger_scores.parquet}`, `artifacts/<run_id>/train/` |
-| 5 | `calibrate` | Platt / isotonic trên calibration sample | *stub, chặng 5* |
+| 5 | `calibrate` | Platt / isotonic trên calibration sample, chọn bằng CV; đóng băng model package | `data/processed/home_credit/model_package/`, `artifacts/<run_id>/calibrate/` |
 | 6 | `validate-model` | Tính lại độc lập AUC/Gini/KS, PSI, bootstrap | *stub, chặng 6* |
 | 7 | `monitor` | Vintage, roll rate, migration | *stub, chặng 8* |
 | 8 | `ews` | Cohort, nhãn 3 tháng, model, watchlist | *stub, chặng 9* |
@@ -85,11 +86,11 @@ bank-credit-risk-platform/
 ├── src/credit_risk/
 │   ├── data/                     # contracts, ingest, validate (DuckDB)
 │   ├── features/                 # split.py, availability.py, build.py, binning.py, iv_report.py, selection.py, woe.py
-│   ├── models/                   # scorecard.py (champion), challenger.py (LightGBM, SHAP)
+│   ├── models/                   # scorecard.py (champion), challenger.py (LightGBM, SHAP), calibration.py
 │   ├── validation/               # metrics.py: AUC, Gini, KS, Brier, PSI
 │   ├── monitoring/               # buckets.py, transitions.py (roll rate)
 │   ├── ews/                      # labels.py: nhãn 90+ DPD trong 3 tháng
-│   ├── reporting/                # model_card.py, challenger_report.py
+│   ├── reporting/                # model_card.py, challenger_report.py, calibration_report.py
 │   ├── pipeline.py               # 9 bước, run_id, manifest
 │   └── cli.py
 ├── tests/                        # metric, label, data validation, pipeline, config
