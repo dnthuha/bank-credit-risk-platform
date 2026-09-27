@@ -44,8 +44,20 @@ from credit_risk.features.selection import (
 )
 from credit_risk.features.split import SplitError, SplitSpec, assign_splits, split_summary
 from credit_risk.lineage import RunContext, new_run, write_manifest
+from credit_risk.models.calibration import (
+    CalibrationError,
+    CalibrationSpec,
+    calibration_metrics,
+    logit,
+    package_fingerprint,
+    reliability_table,
+    select_calibrator,
+    sha256_file,
+    sigmoid,
+)
 from credit_risk.models.challenger import ChallengerError, ChallengerSpec, fit_challenger
 from credit_risk.models.scorecard import Scorecard, ScorecardError, ScorecardSpec, fit_sign_stable, scorecard_payload
+from credit_risk.reporting.calibration_report import anchors_table, calibration_report_markdown
 from credit_risk.reporting.challenger_report import (
     agreement,
     challenger_report_markdown,
@@ -586,6 +598,157 @@ def _train_challenger(ctx: RunContext, con, paths, binning: dict, binnings, out_
     }
 
 
+PACKAGE_DIR = "model_package"
+
+
+def _display_path(path, settings: Settings) -> str:
+    """Path as a reader finds it: relative to the repository when it lives inside it."""
+    try:
+        return path.relative_to(settings.repo_root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _calibrate(ctx: RunContext, sources: Sequence[str]) -> None:
+    """Stage 5: calibrate both models' PD on the calibration split, then freeze the model package."""
+    if "home_credit" not in sources:
+        ctx.record("calibrate", "stub", "home_credit not in sources; nothing to calibrate yet")
+        return
+
+    folder = ctx.settings.processed_dir / "home_credit"
+    names = ("scorecard.json", "scores.parquet", "challenger.json", "challenger_model.txt",
+             "challenger_scores.parquet", "features.parquet", "splits.parquet")
+    paths = {name: folder / name for name in names}
+    for path in paths.values():
+        if not path.exists():
+            raise StepFailed(f"{path.name} not found - run train first")
+    try:
+        spec = CalibrationSpec.from_config(ctx.config.model_dev)
+    except CalibrationError as exc:
+        raise StepFailed(f"calibration: {exc}") from exc
+    scorecard = json.loads(paths["scorecard.json"].read_text(encoding="utf-8"))
+    challenger = json.loads(paths["challenger.json"].read_text(encoding="utf-8"))
+    if challenger["champion_fingerprint"] != scorecard["fingerprint"]:
+        raise StepFailed("challenger.json was trained next to another scorecard - run train again")
+
+    con = connect(ctx.settings)
+    n_reasons = sum(1 for c in pd.read_parquet(paths["scores.parquet"]).columns if c.startswith("reason_"))
+    reasons = [f"reason_{i}" for i in range(1, n_reasons + 1)]
+    champion_cols = ", ".join(f"s.{c} AS champion_{c}" for c in reasons)
+    challenger_cols = ", ".join(f"c.{c} AS challenger_{c}" for c in reasons)
+    frame = con.execute(
+        f"SELECT s.SK_ID_CURR, s.population, s.split, s.score, c.pd_challenger, {champion_cols}, {challenger_cols}, "
+        "f.TARGET, f.NAME_CONTRACT_TYPE "
+        f"FROM read_parquet({sql_str(paths['scores.parquet'])}) s "
+        f"JOIN read_parquet({sql_str(paths['challenger_scores.parquet'])}) c USING (SK_ID_CURR) "
+        f"JOIN read_parquet({sql_str(paths['features.parquet'])}) f USING (SK_ID_CURR) ORDER BY SK_ID_CURR"
+    ).df()
+    counts = [len(pd.read_parquet(paths[n], columns=["SK_ID_CURR"]))
+              for n in ("scores.parquet", "challenger_scores.parquet", "features.parquet")]
+    if len(set(counts + [len(frame)])) != 1:
+        raise StepFailed("scores.parquet, challenger_scores.parquet and features.parquet do not cover the same "
+                         "applicants - run train again")
+
+    offset, factor = float(scorecard["offset"]), float(scorecard["factor"])
+    log_odds = {"champion": -(frame["score"].to_numpy(dtype=float) - offset) / factor,
+                "challenger": logit(np.clip(frame["pd_challenger"].to_numpy(dtype=float), 1e-15, 1 - 1e-15))}
+    masks = {s: (frame["split"] == s).to_numpy() for s in ("train", "validation", "calibration")}
+    y = frame["TARGET"].to_numpy()
+
+    models, calibrators, calibrated = {}, {}, {}
+    for name, x in log_odds.items():
+        cal = masks["calibration"]
+        try:
+            selection = select_calibrator(x[cal], y[cal].astype(int), spec)
+        except CalibrationError as exc:
+            raise StepFailed(f"calibration ({name}): {exc}") from exc
+        calibrator = selection.calibrator
+        pd_after = calibrator.apply(x)
+        pd_before = sigmoid(x)
+        va = masks["validation"]
+        by_contract = []
+        for contract, part in frame[va].assign(pd=pd_after[va]).groupby("NAME_CONTRACT_TYPE"):
+            by_contract.append({"segment": contract, "n": len(part), "mean_pd": float(part["pd"].mean()),
+                                "bad_rate": float(part["TARGET"].mean()),
+                                "ratio": float(part["TARGET"].mean() / part["pd"].mean())})
+        models[name] = {
+            "before": {s: calibration_metrics(y[m], pd_before[m]) for s, m in masks.items()},
+            "cv": selection.cv.to_dict(orient="records"),
+            "chosen": calibrator.method,
+            "params": calibrator.params,
+            "after": {"validation": calibration_metrics(y[va], pd_after[va])},
+            "auc": {"before": discrimination(y[va], pd_before[va])["auc"],
+                    "after": discrimination(y[va], pd_after[va])["auc"]},
+            "reliability": reliability_table(y[va], pd_after[va], spec.n_bins).to_dict(orient="records"),
+            "by_contract": by_contract,
+        }
+        calibrators[name], calibrated[name] = calibrator, pd_after
+
+    # Freeze: the two models, their calibrators and the calibrated outputs, in one folder.
+    package_dir = folder / PACKAGE_DIR
+    package_dir.mkdir(exist_ok=True)
+    (package_dir / "champion.json").write_text(json.dumps(
+        {"scorecard": scorecard, "calibration": calibrators["champion"].to_dict()},
+        indent=1, ensure_ascii=False, default=str), encoding="utf-8")
+    (package_dir / "challenger.json").write_text(json.dumps(
+        {"challenger": challenger, "calibration": calibrators["challenger"].to_dict()},
+        indent=1, ensure_ascii=False, default=str), encoding="utf-8")
+    (package_dir / "challenger_model.txt").write_bytes(paths["challenger_model.txt"].read_bytes())
+    out = pd.DataFrame({"SK_ID_CURR": frame["SK_ID_CURR"], "population": frame["population"],
+                        "split": frame["split"], "score": frame["score"],
+                        "pd_champion": calibrated["champion"], "pd_challenger": calibrated["challenger"]})
+    for column in reasons:
+        out[f"champion_{column}"] = frame[f"champion_{column}"]
+        out[f"challenger_{column}"] = frame[f"challenger_{column}"]
+    out.to_parquet(package_dir / "calibrated_scores.parquet", index=False)
+
+    content = {"champion": scorecard["fingerprint"], "challenger": challenger["fingerprint"],
+               "calibration": {n: c.to_dict() for n, c in calibrators.items()}}
+    files = {name: sha256_file(package_dir / name)
+             for name in ("champion.json", "challenger.json", "challenger_model.txt", "calibrated_scores.parquet")}
+    package = {
+        "run_id": ctx.run_id,
+        "config_hash": ctx.config.hash,
+        "frozen_at": ctx.started_at,
+        "fitted_on": "calibration",
+        "split_fingerprint": scorecard["split_fingerprint"],
+        "champion_fingerprint": scorecard["fingerprint"],
+        "challenger_fingerprint": challenger["fingerprint"],
+        "calibration": {n: c.method for n, c in calibrators.items()},
+        "fingerprint": package_fingerprint(content),
+        "files": files,
+    }
+    (package_dir / "package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
+
+    out_dir = ctx.run_dir / "calibrate"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
+    (out_dir / "calibration.json").write_text(json.dumps(models, indent=2, default=str), encoding="utf-8")
+    context = {
+        "meta": {"run_id": ctx.run_id, "champion_fingerprint": scorecard["fingerprint"],
+                 "challenger_fingerprint": challenger["fingerprint"],
+                 "rows_calibration": int(masks["calibration"].sum()), "rows_validation": int(masks["validation"].sum()),
+                 "bad_rate_calibration": float(y[masks["calibration"]].mean())},
+        "spec": spec.__dict__,
+        "models": models,
+        "anchors": anchors_table(offset, factor, calibrators["champion"]),
+        "package": {**package, "folder": _display_path(package_dir, ctx.settings)},
+    }
+    (out_dir / "calibration_report.md").write_text(calibration_report_markdown(context), encoding="utf-8")
+
+    summary = "; ".join(
+        f"{n}: {m['chosen']} (validation Brier {m['before']['validation']['brier']:.5f} -> "
+        f"{m['after']['validation']['brier']:.5f}, slope {m['after']['validation']['slope']:.3f}, "
+        f"intercept {m['after']['validation']['intercept']:+.3f})" for n, m in models.items())
+    log.info("  calibration: %s | package %s", summary, package["fingerprint"][:12])
+    ctx.record("calibrate", "ok", f"{summary}; package fingerprint {package['fingerprint'][:12]}", [
+        *(f"{package_dir.relative_to(ctx.settings.data_dir).as_posix()}/{n}" for n in [*files, "package.json"]),
+        "calibrate/package.json",
+        "calibrate/calibration.json",
+        "calibrate/calibration_report.md",
+    ])
+
+
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:
     def run(ctx: RunContext, sources: Sequence[str]) -> None:
         log.info("[stub] %s - not implemented yet (roadmap stage %s)", step, stage)
@@ -599,7 +762,7 @@ STEPS: dict[str, Callable[[RunContext, Sequence[str]], None]] = {
     "validate-data": _validate_data,
     "features": _features,
     "train": _train,
-    "calibrate": _stub("calibrate", "5"),
+    "calibrate": _calibrate,
     "validate-model": _stub("validate-model", "6"),
     "monitor": _stub("monitor", "8"),
     "ews": _stub("ews", "9"),

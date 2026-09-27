@@ -98,7 +98,13 @@ challenger:
     lambda_l2: [0.0, 1.0, 10.0]
 
 calibration:
+  # Fit trên tập calibration (15%). "Không calibrate" luôn được chấm làm mốc so sánh, không được chọn.
   methods: [platt, isotonic]
+  # Chọn phương pháp bằng cross-validation bên trong tập calibration (Brier ngoài fold). Các phương pháp
+  # cách phương pháp tốt nhất <= selection_tolerance_brier coi như bằng nhau, chọn cái đơn giản hơn
+  # (Platt: 2 tham số, giữ thứ hạng; isotonic: tự do nhưng dễ overfit và làm AUC giảm vì tạo ties).
+  cv_folds: 5
+  selection_tolerance_brier: 0.0001
   n_bins_for_diagnostics: 10
 
 explainability:
