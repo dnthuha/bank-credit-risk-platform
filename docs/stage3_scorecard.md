@@ -20,6 +20,10 @@ split / binning / shortlist của Stage 2 (fingerprint `bd8d70cd52bf` / `27c1d5b
 - PSI của score so với application_test: 0.0013 (Cash loans 0.0023, **Revolving loans 0.1602**).
 - Tái lập được: ba lần chạy (hai lần trong lúc phát triển, một lần từ commit sạch `c463d38`) cho cùng
   fingerprint scorecard `a254458deddf`.
+- **Cập nhật 2026-10-23 (chặng 6.0):** chạy lại trên máy khác cho đúng mọi hệ số (4 chữ số thập phân), bảng
+  điểm, Gini và calibrator nhưng fingerprint lệch, vì hash băm hệ số lbfgs ở độ chính xác đầy đủ (khác nhau
+  ở chữ số thứ 15 giữa các máy). Fingerprint nay băm số thực làm tròn 8 chữ số (`lineage.round_floats`);
+  fingerprint scorecard hiện hành là `7f83ee99d67b` (run `20261022T165442Z-e9c612e9`). Chi tiết ở docs chặng 6.
 
 ## 2. Quy trình và đầu ra
 

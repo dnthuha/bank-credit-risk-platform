@@ -30,6 +30,27 @@ class RunContext:
         self.steps.append({"step": step, "status": status, "detail": detail, "outputs": outputs or []})
 
 
+FINGERPRINT_DECIMALS = 8
+
+
+def round_floats(obj: Any, decimals: int = FINGERPRINT_DECIMALS) -> Any:
+    """Copy of `obj` with every float rounded, for hashing fitted parameters.
+
+    Iterative solvers (lbfgs in sklearn's LogisticRegression) land on the same
+    optimum to ~1e-12 on every machine but not on the same bits: hashing raw
+    floats made the scorecard and package fingerprints machine-dependent
+    (found in Stage 6.0). Eight decimals are far below any difference that
+    changes a point or a PD, and far above solver noise.
+    """
+    if isinstance(obj, float):
+        return round(obj, decimals)
+    if isinstance(obj, dict):
+        return {k: round_floats(v, decimals) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [round_floats(v, decimals) for v in obj]
+    return obj
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 

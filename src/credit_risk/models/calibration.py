@@ -37,6 +37,7 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
 
+from credit_risk.lineage import round_floats
 from credit_risk.validation.metrics import auc
 
 SIMPLICITY = ("none", "platt", "isotonic")
@@ -223,4 +224,4 @@ def package_fingerprint(content: dict[str, Any]) -> str:
     models under a new run_id, and that must not look like a new package. The
     files' SHA-256 are recorded next to it for integrity checks.
     """
-    return hashlib.sha256(json.dumps(content, sort_keys=True).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json.dumps(round_floats(content), sort_keys=True).encode("utf-8")).hexdigest()

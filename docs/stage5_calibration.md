@@ -19,6 +19,10 @@ cố định cho chặng 6 thẩm định. Mọi con số dưới đây lấy t�
 - Challenger **trên train** có slope 1.339 (quá tự tin vì overfit): đúng lý do calibration phải làm trên tập riêng.
 - Model package đóng băng, fingerprint `35e42a5f208b`; năm lần chạy (bốn lần trong lúc phát triển, một lần
   từ commit sạch `ce14115`) cho cùng fingerprint và cùng SHA-256 từng file.
+- **Cập nhật 2026-10-23 (chặng 6.0):** fingerprint gói và champion nay băm số thực làm tròn 8 chữ số để không
+  phụ thuộc máy (hệ số lbfgs và tham số Platt khác nhau ở chữ số thứ 15 giữa các máy). Gói hiện hành:
+  fingerprint `c95dc90913d8`, champion `7f83ee99d67b`, challenger `78b3844ac54f` (run `20261022T165442Z-e9c612e9`,
+  cùng mọi con số trong tài liệu này). Chặng 6 thẩm định trên gói này.
 
 ## 2. Dữ liệu
 

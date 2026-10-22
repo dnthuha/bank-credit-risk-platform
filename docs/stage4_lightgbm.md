@@ -24,6 +24,8 @@ chính thức `20260925T042918Z-e6ed0154` (commit `085d86b`, working tree sạch
 - Tái lập được: ba lần chạy (`20260925T030530Z`, `20260925T031425Z` trong lúc phát triển và
   `20260925T042918Z` từ commit sạch `085d86b`) cho cùng fingerprint challenger `78b3844ac54f`; champion vẫn
   là `a254458deddf`.
+- Cập nhật 2026-10-23: fingerprint champion nay là `7f83ee99d67b` sau khi đổi cách băm (xem docs chặng 3,
+  mục kết luận nhanh); challenger không đổi vì LightGBM deterministic và hash băm cây, không băm số thực fit.
 
 ## 2. Thiết kế mô hình
 

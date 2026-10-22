@@ -87,6 +87,19 @@ def test_the_fit_is_deterministic():
     pd.testing.assert_frame_equal(fit1.trail, fit2.trail)
 
 
+def test_the_fingerprint_ignores_solver_noise_but_not_a_real_change():
+    """Stage 6.0 finding: lbfgs lands on the same optimum to ~1e-12 on another machine but not
+    on the same bits, so the hash must not depend on the last digits of a coefficient."""
+    card, _, _ = fitted()
+    f = card.features[0]
+    noisy = Scorecard.from_payload(card.to_dict(), card.spec)
+    noisy.coefficients[f] = card.coefficients[f] + 1e-12
+    assert noisy.fingerprint() == card.fingerprint()
+    changed = Scorecard.from_payload(card.to_dict(), card.spec)
+    changed.coefficients[f] = card.coefficients[f] + 1e-6
+    assert changed.fingerprint() != card.fingerprint()
+
+
 def test_without_the_sign_requirement_nothing_is_dropped():
     s = spec(feature_selection={"require_stable_coefficient_sign": False})
     card, fit, _ = fitted(s=s)

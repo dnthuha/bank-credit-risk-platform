@@ -121,3 +121,15 @@ def test_diagnostics_of_a_perfect_model():
 def test_bad_calibration_config_is_rejected(override, message):
     with pytest.raises(CalibrationError, match=message):
         spec(**override)
+
+
+def test_package_fingerprint_ignores_solver_noise_in_the_calibrator():
+    from credit_risk.models.calibration import package_fingerprint
+
+    content = {"champion": "c", "challenger": "d",
+               "calibration": {"champion": {"method": "platt", "params": {"a": -0.1055044142172611, "b": 0.97}}}}
+    noisy = {**content, "calibration": {"champion": {"method": "platt",
+                                                     "params": {"a": -0.1055044142172611 + 1e-12, "b": 0.97}}}}
+    other = {**content, "calibration": {"champion": {"method": "platt", "params": {"a": -0.1055, "b": 0.97}}}}
+    assert package_fingerprint(noisy) == package_fingerprint(content)
+    assert package_fingerprint(other) != package_fingerprint(content)

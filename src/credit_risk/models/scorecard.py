@@ -45,6 +45,7 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
 from credit_risk.features.binning import FeatureBinning
+from credit_risk.lineage import round_floats
 
 
 class ScorecardError(ValueError):
@@ -258,7 +259,8 @@ class Scorecard:
         }
 
     def fingerprint(self) -> str:
-        body = json.dumps(self.to_dict(), sort_keys=True, default=str)
+        """Hash of the scorecard with fitted floats rounded (see `lineage.round_floats`)."""
+        body = json.dumps(round_floats(self.to_dict()), sort_keys=True, default=str)
         return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
     @classmethod
