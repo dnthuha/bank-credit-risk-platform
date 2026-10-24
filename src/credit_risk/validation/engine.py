@@ -39,6 +39,7 @@ from credit_risk.data.db import connect
 from credit_risk.features.split import SplitSpec
 from credit_risk.settings import Settings
 from credit_risk.validation import calibration_check as cal
+from credit_risk.validation import comparison as cmp
 from credit_risk.validation import discrimination as disc
 from credit_risk.validation import implementation as impl
 from credit_risk.validation import population as pop
@@ -49,7 +50,7 @@ from credit_risk.validation.package import ID, LoadedPackage, PackageError, load
 
 log = logging.getLogger(__name__)
 
-MODULES = ("package", "population", "discrimination", "calibration", "stability", "uncertainty", "segments", "implementation")
+MODULES = ("package", "population", "discrimination", "calibration", "stability", "uncertainty", "segments", "comparison", "implementation")
 
 
 class ValidationFailed(RuntimeError):
@@ -238,6 +239,17 @@ def run_validation(settings: Settings, config: ProjectConfig, run_id: str, sourc
         if why:
             result.findings.append(_finding("segments", "fairness", f"{r.segment} = {r.group}, {r.model}: " + "; ".join(why)))
 
+    # 7.2 comparison: side by side from the tables above, head to head from the rescored applicants
+    cmp_spec = cmp.ComparisonSpec.from_config(validation)
+    h2h = cmp.head_to_head(scored, cmp_spec)
+    cmp_table = cmp.side_by_side(disc_table, intervals, cal_summary, stab_table, seg_table, cmp_spec.sample)
+    cmp_checks = cmp.comparison_checks(h2h, cmp_spec, int((scored["split"] == cmp_spec.sample).sum()),
+                                       cmp.published_agreement_from_train_artifacts(train_run / "train"))
+    checks.append(cmp_checks.assign(module="comparison"))
+    result.sections["comparison"] = {"table": cmp_table, "agreement": h2h["agreement"], "swap_set": h2h["swap_set"],
+                                     "decisions": h2h["decisions"], "equal_volume": h2h["equal_volume"], "checks": cmp_checks}
+    result.markdown["comparison"] = cmp.comparison_markdown(cmp_table, h2h, cmp_checks, cmp_spec)
+
     # 6.8 implementation
     impl_spec = impl.ImplementationSpec.from_config(validation)
     impl_summary, impl_diffs, impl_info = impl.check_implementation(package, frame, impl_spec)
@@ -250,7 +262,7 @@ def run_validation(settings: Settings, config: ProjectConfig, run_id: str, sourc
         result.findings.append(_finding("implementation", "blocking", f"{impl_info['differences']} chênh lệch khi chấm lại"))
 
     result.checks = pd.concat(checks, ignore_index=True)[["module", "check", "claimed", "recounted", "source", "ok"]]
-    for r in result.checks[(~result.checks["ok"]) & (result.checks["module"].isin(["discrimination", "calibration", "stability", "uncertainty"]))].itertuples(index=False):
+    for r in result.checks[(~result.checks["ok"]) & (result.checks["module"].isin(["discrimination", "calibration", "stability", "uncertainty", "comparison"]))].itertuples(index=False):
         result.findings.append(_finding(r.module, "note", f"{r.check}: công bố {r.claimed}, tính lại {r.recounted}"))
 
     result.provenance = {
@@ -304,7 +316,7 @@ def report_markdown(result: ValidationResult, settings: Settings) -> str:
     lines += ["", "## Gói model (6.1)", "", "| Kiểm tra | Kết quả |", "|---|---|"]
     for r in result.package.checks.itertuples(index=False):
         lines.append(f"| {r.check} | {'OK' if r.ok else '**LỆCH**'} |")
-    for module in ("population", "discrimination", "calibration", "stability", "uncertainty", "segments", "implementation"):
+    for module in ("population", "discrimination", "calibration", "stability", "uncertainty", "segments", "comparison", "implementation"):
         if module in result.markdown:
             lines += ["", result.markdown[module].rstrip()]
     return "\n".join(lines) + "\n"
