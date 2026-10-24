@@ -147,6 +147,10 @@ def run_validation(settings: Settings, config: ProjectConfig, run_id: str, sourc
     frame = load_scoring_frame(con, folder / "features.parquet", folder / "splits.parquet", columns)
     scored = score_with_package(package, frame).join(frame.drop(columns=[ID]))
     train_mask = (scored["split"] == "train").to_numpy()
+    # Development artifacts to compare with: the train step's run (from the scorecard payload) and the
+    # calibrate step's run (the package's own). They differ when calibrate was rerun alone.
+    champion_payload = json.loads((package_dir / "champion.json").read_text(encoding="utf-8"))["scorecard"]
+    train_run = settings.artifacts_dir / champion_payload.get("run_id", package.meta["run_id"])
     dev_run = settings.artifacts_dir / package.meta["run_id"]
 
     # 6.2 population: stop if it does not reconcile
@@ -169,7 +173,7 @@ def run_validation(settings: Settings, config: ProjectConfig, run_id: str, sourc
     # 6.3 discrimination
     disc_spec = disc.DiscriminationSpec.from_config(validation)
     disc_table = disc.recompute_discrimination(scored, disc_spec)
-    disc_pub = disc.published_from_train_artifacts(dev_run / "train")
+    disc_pub = disc.published_from_train_artifacts(train_run / "train")
     disc_checks = disc.discrimination_checks(disc_table, disc_spec, disc_pub)
     checks.append(disc_checks.assign(module="discrimination"))
     result.sections["discrimination"] = {"table": disc_table, "checks": disc_checks, "published": disc_pub}
@@ -191,7 +195,7 @@ def run_validation(settings: Settings, config: ProjectConfig, run_id: str, sourc
 
     # 6.5 stability
     stab_table, stab_bins, stab_features = stab.recompute_stability(scored, package, stab_spec)
-    stab_pub = stab.published_from_train_artifacts(dev_run / "train")
+    stab_pub = stab.published_from_train_artifacts(train_run / "train")
     stab_checks = stab.stability_checks(stab_table, stab_spec, stab_pub)
     checks.append(stab_checks.assign(module="stability"))
     result.sections["stability"] = {"table": stab_table, "features": stab_features, "checks": stab_checks,
@@ -253,7 +257,7 @@ def run_validation(settings: Settings, config: ProjectConfig, run_id: str, sourc
         "run_id": run_id, "source": source,
         "package_fingerprint": package.fingerprint, "champion_fingerprint": package.meta["champion_fingerprint"],
         "challenger_fingerprint": package.meta["challenger_fingerprint"], "split_fingerprint": package.meta["split_fingerprint"],
-        "package_run_id": package.meta["run_id"], "config_hash": config.hash, "seed": unc_spec.seed,
+        "package_run_id": package.meta["run_id"], "train_run_id": champion_payload.get("run_id"), "config_hash": config.hash, "seed": unc_spec.seed,
         "bootstrap_resamples": unc_spec.resamples, "implementation_sample": impl_info["sample_size"],
         "rows": {k: int(v) for k, v in scored["split"].fillna("application_test").value_counts().to_dict().items()},
         "checks_total": int(len(result.checks)), "checks_failed": int((~result.checks["ok"]).sum()),

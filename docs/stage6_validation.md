@@ -3,7 +3,9 @@
 Chặng này đổi vai: không còn là người xây mô hình mà là bên thẩm định độc lập. Gói model đóng băng ở Stage 5
 chỉ là **đầu vào**, không phải sự thật. Mọi con số được tính lại từ dữ liệu đã xử lý và từ chính gói, bằng
 code riêng trong `credit_risk.validation` (numpy / pandas / DuckDB, không gọi sklearn ở phần đo lường).
-Con số dưới đây lấy từ lần chạy chính thức `20261024T171209Z-eb995677` trên gói `c95dc90913d8`.
+Con số dưới đây lấy từ lần chạy chính thức `20261024T171209Z-eb995677` trên gói `c95dc90913d8`. Sau khi sửa
+phát hiện 2 (chặng 7.0, 2026-10-25) và chạy lại `calibrate` + `validate-model` (run `20261024T173307Z-eb995677`,
+fingerprint gói không đổi): **252 kiểm tra, 0 lệch, 17 phát hiện**.
 
 > **Cách đọc nhanh:** "kiểm tra" là một phép so sánh có đáp án (công bố so với tính lại, hoặc một bất biến như
 > Gini = 2·AUC − 1). "Phát hiện" là một điều người phê duyệt cần biết, có hay không kèm kiểm tra lệch. Kết
@@ -90,8 +92,8 @@ z-score; Hosmer-Lemeshow.
 
 **Phát hiện 2.** Slope lần phát triển (`calibration.json`) lệch 0.0011 (champion) và 0.0002 (challenger) so với
 nghiệm hợp lý cực đại: sklearn với tolerance mặc định dừng sớm; chạy lại sklearn với `tol=1e-10` cho đúng số
-của Newton. Đề xuất: đặt tolerance chặt trong `models/calibration.calibration_slope_intercept` (chỉ đổi con
-số báo cáo, không đổi gói). Mean PD, bad rate, Brier, intercept-in-the-large và 40 con số bảng reliability khớp.
+của Newton. **Đã sửa ở chặng 7.0:** `models/calibration.calibration_slope_intercept` dùng `tol=1e-10`; hai kiểm tra
+slope nay khớp (chỉ đổi con số báo cáo, không đổi gói). Mean PD, bad rate, Brier, intercept-in-the-large và 40 con số bảng reliability khớp.
 
 **Phát hiện 3.** Band PD thấp nhất của champion trên test: kỳ vọng 50.5 bad, quan sát 76 (bad rate 1.65% so
 PD 1.09%). Nhóm "an toàn nhất" theo scorecard thực tế rủi ro hơn 50% so với PD nói. Slope 0.964 thấp hơn 1

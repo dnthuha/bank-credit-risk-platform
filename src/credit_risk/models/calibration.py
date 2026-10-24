@@ -143,7 +143,9 @@ def calibration_slope_intercept(y, p) -> dict[str, float]:
     > 0 means PD too low on average). Both by maximum likelihood, no penalty."""
     y = np.asarray(y, dtype=float)
     x = logit(np.clip(np.asarray(p, dtype=float), 1e-12, 1 - 1e-12))
-    slope = float(LogisticRegression(C=np.inf, max_iter=1000).fit(x.reshape(-1, 1), y).coef_[0, 0])
+    # tol=1e-10: at lbfgs's default tolerance the reported slope was off the maximum-likelihood
+    # value by ~1e-3 (Stage 6.4 finding 2). This is a diagnostic; the Platt fit above is unchanged.
+    slope = float(LogisticRegression(C=np.inf, max_iter=10000, tol=1e-10).fit(x.reshape(-1, 1), y).coef_[0, 0])
     a = 0.0
     for _ in range(50):  # Newton on the one-parameter model with offset x
         q = sigmoid(a + x)
