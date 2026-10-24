@@ -52,5 +52,37 @@ implementation_check:
   sample_size: 5000
   abs_tolerance_pd: 1.0e-9
 
-# Quy tắc ra kết luận (Đạt / Đạt có lưu ý / Phải khắc phục): chặng 7
-conclusion_rules: {}
+# Quy tắc ra kết luận (chặng 7.1, quyết định 2026-10-25). Mỗi quy tắc đọc metrics.json của bước
+# validate-model và cho một trong ba kết quả cho TỪNG mô hình: pass / note (Đạt có lưu ý) / remediate
+# (Phải khắc phục). Kết luận mô hình = kết quả nặng nhất. Khuyến nghị tổng do quy tắc sinh ra, không viết tay.
+conclusion_rules:
+  headline_sample: test
+  recommendation: true                 # thêm mục "triển khai mô hình nào, giữ mô hình nào làm đối chứng"
+  rules:
+    blocking_checks: {}                # gói / dân số / chấm lại lệch -> remediate, không có ngưỡng
+    auc_ci_lower:                      # biên dưới khoảng 95% của AUC trên test
+      remediate_below: 0.70
+      note_below: 0.72
+    validation_test_gap:               # tụt từ validation sang test có ý nghĩa thống kê
+      metric: gini
+      note_if_ci_excludes_zero: true
+    slope:                             # slope hiệu chỉnh trên test
+      note_outside: [0.90, 1.10]
+      note_z_above: 3.0
+      remediate_outside: [0.80, 1.20]
+    bad_rate_to_pd_ratio:
+      note_outside: [0.95, 1.05]
+    flagged_bands:
+      note_at_least: 3
+    output_psi:                        # score / PD tổng thể so với application_test
+      remediate_light: red
+      note_light: amber
+    feature_psi:                       # biến top-5
+      note_light: red
+    sensitive_calibration:             # nhóm nhạy cảm bị cờ hiệu chỉnh (|z| > band_z_limit)
+      min_group_size: 500
+    adverse_impact_ratio:
+      note_below: 0.80
+      remediate_below: 0.60
+    group_auc_gap:                     # AUC nhóm nhạy cảm thấp hơn tổng thể quá ngưỡng
+      note_below_minus: 0.05
