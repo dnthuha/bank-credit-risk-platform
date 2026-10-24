@@ -53,12 +53,21 @@ def draw_sample(published: pd.DataFrame, spec: ImplementationSpec) -> np.ndarray
     strata = published["split"].where(published["split"].notna(), "application_test")
     rng = np.random.default_rng(spec.seed)
     n = min(spec.sample_size, len(published))
-    sizes = strata.value_counts()
-    quota = {name: max(1, int(round(n * count / len(published)))) for name, count in sizes.items()}
+    sizes = strata.value_counts().sort_index()
+    # Largest-remainder apportionment: quotas sum to n exactly, every stratum gets at least one.
+    exact = n * sizes / len(published)
+    quota = np.maximum(1, np.floor(exact).astype(int))
+    remainder = n - int(quota.sum())
+    if remainder > 0:
+        for name in (exact - np.floor(exact)).sort_values(ascending=False).index[:remainder]:
+            quota[name] += 1
+    elif remainder < 0:
+        for name in quota.sort_values(ascending=False).index[:-remainder]:
+            quota[name] -= 1
     chosen = []
     for name, k in quota.items():
         ids = published.loc[strata == name, ID].to_numpy()
-        chosen.append(rng.choice(ids, size=min(k, len(ids)), replace=False))
+        chosen.append(rng.choice(ids, size=min(int(k), len(ids)), replace=False))
     return np.sort(np.concatenate(chosen))
 
 
@@ -84,9 +93,10 @@ def check_implementation(package: LoadedPackage, applicants: pd.DataFrame, spec:
     differences: one row per (applicant, quantity) that differs, with both values.
     """
     ids = draw_sample(package.published, spec)
-    frame = applicants.set_index(ID, drop=False).loc[ids].reset_index(drop=True)
-    if len(frame) != len(ids) or frame[ID].duplicated().any():
+    indexed = applicants.set_index(ID, drop=False)
+    if indexed.index.duplicated().any() or not set(ids) <= set(indexed.index):
         raise ImplementationError("the scoring frame does not hold every sampled applicant exactly once")
+    frame = indexed.loc[ids].reset_index(drop=True)
     published = package.published.set_index(ID).loc[ids].reset_index()
     rescored = score_with_package(package, frame)
     assert np.array_equal(rescored[ID].to_numpy(), published[ID].to_numpy())

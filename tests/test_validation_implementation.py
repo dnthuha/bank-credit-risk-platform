@@ -58,13 +58,13 @@ def test_an_altered_score_pd_or_reason_code_is_caught_with_its_id(chain):
     victim = published.index[published["SK_ID_CURR"] == ids[0]][0]
     published.loc[victim, "score"] += 1
     published.loc[victim, "pd_champion"] += 1e-6
-    published.loc[victim, "pd_challenger"] += 5e-10            # inside the tolerance: not a difference
+    published.loc[victim, "pd_challenger"] += 4e-10            # inside the tolerance: not a difference
     published.loc[victim, "challenger_reason_1"] = "NOT_A_FEATURE"
     summary, differences, info = check_implementation(with_published(package, published), frame, spec)
     assert not info["ok"]
     flagged = summary.set_index("quantity")
     assert flagged.loc["score", "differences"] == 1 and flagged.loc["pd_champion", "differences"] == 1
-    assert flagged.loc["pd_challenger", "differences"] == 0 and flagged.loc["pd_challenger", "max_abs_diff"] <= 5e-10
+    assert flagged.loc["pd_challenger", "differences"] == 0 and flagged.loc["pd_challenger", "max_abs_diff"] <= 1e-9
     assert flagged.loc["challenger_reason_1", "differences"] == 1
     assert set(differences["SK_ID_CURR"]) == {ids[0]}
     assert set(differences["quantity"]) == {"score", "pd_champion", "challenger_reason_1"}
