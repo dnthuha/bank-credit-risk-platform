@@ -38,6 +38,16 @@ segments:
   - {name: family_status, column: NAME_FAMILY_STATUS, fairness_review: true}
   - {name: age_band, column: DAYS_BIRTH, fairness_review: true}
 
+# Quyết định 2026-10-24 (chặng 6.7): thẩm định cả hai mô hình; dải tuổi và quy tắc từ chối dưới đây.
+segment_options:
+  samples: [test]                 # tập chính để xem theo phân khúc (validation chỉ để tham khảo)
+  min_group_size: 500             # nhóm nhỏ hơn: vẫn báo n và bad rate, không tính AUC
+  score_bands: 10                 # band điểm champion, biên học trên train (equal-count)
+  age_bands_years: [30, 45, 60]   # DAYS_BIRTH -> <30, 30-45, 45-60, 60+
+  reject_rule:
+    pd_above: 0.10                # "từ chối" = PD đã calibrate > 10%, dùng chung cho hai mô hình
+  band_z_limit: 2.0               # |z| của bad quan sát so kỳ vọng trong nhóm, vượt thì gắn cờ
+
 implementation_check:
   sample_size: 5000
   abs_tolerance_pd: 1.0e-9
