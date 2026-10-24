@@ -24,7 +24,8 @@ def test_full_pipeline_runs_end_to_end(raw_data):
     statuses = {s["step"]: s["status"] for s in manifest["steps"]}
     assert statuses["ingest"] == statuses["validate-data"] == statuses["features"] == "ok"
     assert statuses["train"] == statuses["calibrate"] == "ok"
-    assert all(statuses[s] == "stub" for s in list(STEPS)[5:])
+    assert statuses["validate-model"] == "ok"
+    assert all(statuses[s] == "stub" for s in list(STEPS)[6:])
     assert manifest["run_id"].endswith(manifest["config_hash"][:8])
     assert manifest["packages"]["duckdb"] is not None
 

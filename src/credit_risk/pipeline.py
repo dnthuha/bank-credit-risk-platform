@@ -749,6 +749,28 @@ def _calibrate(ctx: RunContext, sources: Sequence[str]) -> None:
     ])
 
 
+def _validate_model(ctx: RunContext, sources: Sequence[str]) -> None:
+    """Stage 6: independent validation of the frozen package - recount everything, write metrics + report."""
+    if "home_credit" not in sources:
+        ctx.record("validate-model", "stub", "home_credit not in sources; nothing to validate yet")
+        return
+    from credit_risk.validation.engine import ValidationFailed, run_validation, write_outputs
+
+    out_dir = ctx.run_dir / "validate-model"
+    try:
+        result = run_validation(ctx.settings, ctx.config, ctx.run_id)
+    except ValidationFailed as exc:
+        raise StepFailed(f"validate-model: {exc}") from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise StepFailed(f"validate-model: {exc}") from exc
+    paths = write_outputs(result, out_dir, ctx.settings)
+    p = result.provenance
+    summary = (f"package {p['package_fingerprint'][:12]}: {p['checks_total']} checks, {p['checks_failed']} failed, "
+               f"{p['findings']} findings")
+    log.info("  validate-model: %s", summary)
+    ctx.record("validate-model", "ok", summary, [f"validate-model/{path.name}" for path in paths])
+
+
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:
     def run(ctx: RunContext, sources: Sequence[str]) -> None:
         log.info("[stub] %s - not implemented yet (roadmap stage %s)", step, stage)
@@ -763,7 +785,7 @@ STEPS: dict[str, Callable[[RunContext, Sequence[str]], None]] = {
     "features": _features,
     "train": _train,
     "calibrate": _calibrate,
-    "validate-model": _stub("validate-model", "6"),
+    "validate-model": _validate_model,
     "monitor": _stub("monitor", "8"),
     "ews": _stub("ews", "9"),
     "report": _stub("report", "7 and 10"),
