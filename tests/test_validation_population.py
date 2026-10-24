@@ -8,11 +8,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from conftest import REPO_ROOT, Settings, quick_config_dir, write_home_credit_raw
 from credit_risk.config import load_config
 from credit_risk.data.db import connect
 from credit_risk.features.split import SplitSpec
-from credit_risk.pipeline import run_pipeline
 from credit_risk.validation.package import load_package
 from credit_risk.validation.population import (
     PopulationError,
@@ -22,18 +20,11 @@ from credit_risk.validation.population import (
     reconcile_population,
 )
 
-STEPS = ["ingest", "validate-data", "features", "train", "calibrate"]
 
 
-@pytest.fixture(scope="module")
-def built(tmp_path_factory):
-    root = tmp_path_factory.mktemp("stage62")
-    settings = Settings(repo_root=REPO_ROOT, config_dir=quick_config_dir(root / "configs"),
-                        data_dir=root / "data", artifacts_dir=root / "artifacts",
-                        duckdb_memory_limit="512MB", duckdb_threads=2)
-    write_home_credit_raw(settings, n=20000, signal=True)
-    assert run_pipeline(steps=STEPS, sources=["home_credit"], settings=settings) == 0
-    return settings, load_config(settings.config_dir)
+@pytest.fixture
+def built(stage6_build):
+    return stage6_build
 
 
 @pytest.fixture

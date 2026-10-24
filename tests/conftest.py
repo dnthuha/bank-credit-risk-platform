@@ -286,3 +286,23 @@ def raw_data(settings: Settings) -> Settings:
     return settings
 
 
+# ---------------------------------------------------------------------------
+# Stage 6: one frozen package per session, built by the real pipeline on synthetic data
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def stage6_build(tmp_path_factory):
+    """(settings, config) of a completed ingest -> calibrate run on 20,000 synthetic applicants.
+
+    Validation tests copy what they alter; the build itself is shared and must stay untouched.
+    """
+    from credit_risk.pipeline import run_pipeline
+
+    root = tmp_path_factory.mktemp("stage6")
+    settings = Settings(repo_root=REPO_ROOT, config_dir=quick_config_dir(root / "configs"),
+                        data_dir=root / "data", artifacts_dir=root / "artifacts",
+                        duckdb_memory_limit="512MB", duckdb_threads=2)
+    write_home_credit_raw(settings, n=20000, signal=True)
+    steps = ["ingest", "validate-data", "features", "train", "calibrate"]
+    assert run_pipeline(steps=steps, sources=["home_credit"], settings=settings) == 0
+    return settings, load_config(settings.config_dir)
