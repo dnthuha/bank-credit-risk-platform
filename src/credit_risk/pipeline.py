@@ -777,6 +777,7 @@ def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
     if "freddie_mac" not in sources:
         ctx.record("monitor", "stub", "freddie_mac not in sources; nothing to monitor")
         return
+    from credit_risk.monitoring import concentration as cn
     from credit_risk.monitoring import portfolio as pf
     from credit_risk.monitoring import roll as rl
     from credit_risk.monitoring import vintage as vt
@@ -836,6 +837,19 @@ def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
     rates.to_csv(out_dir / "roll_rates.csv", index=False)
     sections.append(rl.roll_markdown(counts, rates, monthly.set_index("period")["regime"], month, rl_checks))
 
+    # 8.4 concentration and segments
+    psi_cfg = ctx.config.definitions["metric_thresholds"]["psi"]
+    dims = list(ctx.config.ews["monitoring"]["concentration_dimensions"])
+    seg_table = cn.segment_table(con, folder, dims, month)
+    view = cn.reporting_view(seg_table, month)
+    conc = cn.concentration_summary(seg_table, month, float(psi_cfg["zero_bin_epsilon"]))
+    cn_checks = cn.concentration_checks(seg_table, monthly, month)
+    all_checks.append(cn_checks.assign(module="concentration"))
+    seg_table.to_csv(out_dir / "segments_monthly.csv", index=False)
+    conc.to_csv(out_dir / "concentration.csv", index=False)
+    sections.append(cn.concentration_markdown(view, conc, month, cn_checks, float(psi_cfg["stable_below"]),
+                                              float(psi_cfg["significant_above"]), cn.group_order(spec.bands)))
+
     checks_all = pd.concat(all_checks, ignore_index=True)
     checks_all.to_csv(out_dir / "checks.csv", index=False)
     (out_dir / "monitoring_report.md").write_text(
@@ -850,7 +864,7 @@ def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
     ctx.record("monitor", "ok", detail, [
         panel_path.relative_to(ctx.settings.data_dir).as_posix(), "monitor/panel_checks.csv", "monitor/panel_summary.json",
         "monitor/portfolio_monthly.csv", "monitor/vintage_curves.csv", "monitor/vintage_curves_year.csv",
-        "monitor/transition_counts.csv", "monitor/roll_rates.csv",
+        "monitor/transition_counts.csv", "monitor/roll_rates.csv", "monitor/segments_monthly.csv", "monitor/concentration.csv",
         "monitor/checks.csv", "monitor/monitoring_report.md"])
 
 
