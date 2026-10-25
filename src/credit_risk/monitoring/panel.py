@@ -18,7 +18,8 @@ built in DuckDB (35.6M rows do not fit in pandas on this laptop) and written to
     prev_exit_type                  is FALSE
     left_truncated                  first reported loan_age > max_first_loan_age
     fico_band, ltv_band, dti_band   bands from ews.yaml (missing -> "missing")
-    property_state, channel, harp   segment columns from origination
+    orig_upb, property_state,       from origination (orig_upb weighs vintage curves)
+    channel, harp
 
 The SQL bucket mapping must agree with `buckets.status_to_bucket`, the pandas
 reference the EWS label tests pin down. The build checks that on every distinct
@@ -164,6 +165,7 @@ def build_panel_sql(folder: Path, spec: PanelSpec) -> str:
            {band_sql('o.fico', spec.bands['fico'])} AS fico_band,
            {band_sql('o.orig_ltv', spec.bands['ltv'])} AS ltv_band,
            {band_sql('o.orig_dti', spec.bands['dti'])} AS dti_band,
+           o.orig_upb,
            coalesce(o.property_state, '{MISSING}') AS property_state,
            coalesce(o.channel, '{MISSING}') AS channel,
            coalesce(o.harp_indicator, '{MISSING}') AS harp

@@ -34,7 +34,7 @@ def folder(settings, project_config):
     perf, orig = [], []
     for loan_id, (age0, months) in LOANS.items():
         year = 2000 + int(loan_id[1:3])
-        orig.append({"loan_id": loan_id, "fico": {1: 600, 2: 700, 3: 790}.get(int(loan_id[-1]), None),
+        orig.append({"loan_id": loan_id, "orig_upb": 100000.0, "fico": {1: 600, 2: 700, 3: 790}.get(int(loan_id[-1]), None),
                      "orig_ltv": 85, "orig_dti": None if loan_id.endswith("5") else 40, "property_state": "CA",
                      "channel": "R", "harp_indicator": "N", "source_file": f"sample_orig_{year}.txt"})
         for k, entry in enumerate(months):

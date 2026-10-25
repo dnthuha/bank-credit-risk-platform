@@ -30,7 +30,7 @@ def built(settings, project_config):
                           "current_upb": u, "zero_balance_removal_upb": 200.0 if z else None, "loan_age": 0}
                          for l, p, s, z, u in ROWS])
     perf.to_parquet(folder / "performance.parquet", index=False)
-    pd.DataFrame([{"loan_id": l, "fico": 700, "orig_ltv": 80, "orig_dti": 30, "property_state": "CA", "channel": "R",
+    pd.DataFrame([{"loan_id": l, "orig_upb": 300.0, "fico": 700, "orig_ltv": 80, "orig_dti": 30, "property_state": "CA", "channel": "R",
                    "harp_indicator": "N", "source_file": "sample_orig_2019.txt"} for l in sorted({r[0] for r in ROWS})]
                  ).to_parquet(folder / "origination.parquet", index=False)
     con = connect(settings)
