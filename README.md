@@ -17,6 +17,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 - Stage 6, validation engine (thẩm định độc lập): [docs/stage6_validation.md](docs/stage6_validation.md)
 - Stage 7, validation report tự động có kết luận: [docs/stage7_validation_report.md](docs/stage7_validation_report.md)
 - Stage 8, portfolio monitoring (Freddie Mac): [docs/stage8_monitoring.md](docs/stage8_monitoring.md)
+- Stage 9, survival và Early Warning System: [docs/stage9_early_warning.md](docs/stage9_early_warning.md)
 - Định nghĩa nghiệp vụ (single source of truth): [configs/definitions.yaml](configs/definitions.yaml)
 
 ## Trạng thái
@@ -68,7 +69,7 @@ python -m credit_risk run --source freddie_mac             # chỉ một nguồn
 | 5 | `calibrate` | Platt / isotonic trên calibration sample, chọn bằng CV; đóng băng model package | `data/processed/home_credit/model_package/`, `artifacts/<run_id>/calibrate/` |
 | 6 | `validate-model` | Thẩm định độc lập gói đóng băng: tính lại AUC/Gini/KS, hiệu chỉnh, PSI, bootstrap, phân khúc, so sánh hai mô hình, chấm lại; áp quy tắc kết luận | `artifacts/<run_id>/validate-model/{metrics.json,validation_report.md}` |
 | 7 | `monitor` | Panel giám sát, chỉ số danh mục hằng tháng, vintage curve, roll rate / migration, phân khúc, cảnh báo theo `ews.yaml` | `data/processed/freddie_mac/monitoring_panel.parquet`, `artifacts/<run_id>/monitor/{monitoring_metrics.json,monitoring_report.md,*.csv}` |
-| 8 | `ews` | Cohort, nhãn 3 tháng, model, watchlist | *stub, chặng 9* |
+| 8 | `ews` | Nhãn 90+ trong 3 tháng (SQL, đối chiếu `labels.py`), feature tại t chỉ từ dòng ≤ t, logistic baseline + LightGBM challenger, chấm điểm mọi đoạn, watchlist theo công suất 5% kèm reason code, survival (Kaplan-Meier, Aalen-Johansen) | `data/processed/freddie_mac/{ews_labels,ews_dataset,ews_scores}.parquet`, `artifacts/<run_id>/ews/{ews_metrics.json,ews_report.md,watchlist.csv,*.csv,models/}` |
 | 9 | `report` | Dữ liệu dashboard | *stub, chặng 10* |
 
 Mỗi lần chạy sinh một `run_id` (`<UTC time>-<config hash>`). File `artifacts/<run_id>/run_manifest.json` ghi lại config hash, seed, git commit, phiên bản thư viện và trạng thái từng bước.
@@ -93,7 +94,7 @@ bank-credit-risk-platform/
 │   ├── validation/               # metrics.py, package, population, discrimination, calibration_check, stability,
 │   │                             # uncertainty, segments, comparison, implementation, conclusion, engine.py
 │   ├── monitoring/               # buckets, transitions, panel, portfolio, vintage, roll, concentration, alerts, engine.py
-│   ├── ews/                      # labels.py: nhãn 90+ DPD trong 3 tháng
+│   ├── ews/                      # labels (pandas reference), cohort, features, models, metrics, evaluation, watchlist, survival, engine.py
 │   ├── reporting/                # model_card.py, challenger_report.py, calibration_report.py
 │   ├── pipeline.py               # 9 bước, run_id, manifest
 │   └── cli.py

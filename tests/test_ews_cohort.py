@@ -96,3 +96,9 @@ def test_prior_90plus_exclusion_follows_the_definition(settings, project_config,
     assert (sql["exclusion_reason"] == "prior_90plus_excluded").sum() > 0
     assert ch._same(ref["exclusion_reason"], sql["exclusion_reason"]) == 0
     assert ch._same(ref["y"], sql["y"]) == 0
+
+
+def test_every_segment_stops_at_the_last_full_window(spec):
+    bounds = spec.split_bounds(pd.Timestamp("2018-10-01"))           # data ends inside train
+    assert bounds["train"] == (pd.Timestamp("2018-03-01"), pd.Timestamp("2018-07-01"))
+    assert all(e < s for s, e in (bounds[k] for k in ("validation", "stress_test", "out_of_time")))   # empty

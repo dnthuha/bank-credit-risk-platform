@@ -80,7 +80,8 @@ class CohortSpec:
 
     def split_bounds(self, last_period: pd.Timestamp) -> dict[str, tuple[pd.Timestamp, pd.Timestamp]]:
         last_labelled = last_period - pd.DateOffset(months=self.horizon)
-        return {k: (s, e if e is not None else last_labelled) for k, (s, e) in self.splits.items()}
+        # every segment stops at the last month with a full window, whatever its configured end
+        return {k: (s, min(e, last_labelled) if e is not None else last_labelled) for k, (s, e) in self.splits.items()}
 
 
 def _date(ts: pd.Timestamp) -> str:

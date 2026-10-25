@@ -16,16 +16,19 @@ def read_manifest(settings):
 
 def test_full_pipeline_runs_end_to_end(raw_data):
     settings = raw_data
-    assert run_pipeline(settings=settings) == 0
+    # every step but ews: three loans over six months have no validation month to fit on;
+    # the ews step runs end to end in test_stage9_dod.py
+    steps = [s for s in STEPS if s != "ews"]
+    assert run_pipeline(steps=steps, settings=settings) == 0
 
     manifest, run_dir = read_manifest(settings)
     assert manifest["status"] == "ok"
-    assert [s["step"] for s in manifest["steps"]] == list(STEPS)
+    assert [s["step"] for s in manifest["steps"]] == steps
     statuses = {s["step"]: s["status"] for s in manifest["steps"]}
     assert statuses["ingest"] == statuses["validate-data"] == statuses["features"] == "ok"
     assert statuses["train"] == statuses["calibrate"] == "ok"
     assert statuses["validate-model"] == statuses["monitor"] == "ok"
-    assert all(statuses[s] == "stub" for s in list(STEPS)[7:])
+    assert statuses["report"] == "stub"
     assert manifest["run_id"].endswith(manifest["config_hash"][:8])
     assert manifest["packages"]["duckdb"] is not None
 

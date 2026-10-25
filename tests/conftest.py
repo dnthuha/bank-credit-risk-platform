@@ -441,3 +441,34 @@ def ews_markov_loans(n: int = 300, seed: int = 3, start: str = "2018-01", end: s
                 break
             month, age = month + 1, age + 1
     return pd.DataFrame(perf), pd.DataFrame(orig)
+
+
+def stage9_config_dir(target: Path) -> Path:
+    """quick_config_dir plus an EWS block sized for a few thousand synthetic loans: a larger
+    non-event share, a two-trial grid with small leaves, short curves allowed. Rules unchanged."""
+    quick_config_dir(target)
+    path = target / "ews.yaml"
+    ews = yaml.safe_load(path.read_text(encoding="utf-8"))
+    cfg = ews["ews"]
+    cfg["reference_sample_loans"] = 500
+    cfg["train_sample"]["non_event_rate"] = 0.3
+    cfg["models"]["challenger"].update(n_estimators=300, early_stopping_rounds=30, grid=[
+        {"num_leaves": 4, "learning_rate": 0.1, "min_child_samples": 20, "reg_lambda": 1.0},
+        {"num_leaves": 8, "learning_rate": 0.05, "min_child_samples": 20, "reg_lambda": 1.0}])
+    cfg["survival"]["min_at_risk"] = 20
+    path.write_text(yaml.safe_dump(ews, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return target
+
+
+@pytest.fixture(scope="session")
+def stage9_build(tmp_path_factory):
+    """(settings, config) after ingest on a synthetic panel 2013-2023 that reaches every EWS segment."""
+    from credit_risk.pipeline import run_pipeline
+
+    root = tmp_path_factory.mktemp("stage9")
+    settings = Settings(repo_root=REPO_ROOT, config_dir=stage9_config_dir(root / "configs"),
+                        data_dir=root / "data", artifacts_dir=root / "artifacts",
+                        duckdb_memory_limit="512MB", duckdb_threads=2)
+    write_freddie_panel_raw(settings, vintages=(2013, 2015, 2017, 2019, 2021), loans_per_vintage=400, end="2023-06")
+    assert run_pipeline(steps=["ingest"], sources=["freddie_mac"], settings=settings) == 0
+    return settings, load_config(settings.config_dir)

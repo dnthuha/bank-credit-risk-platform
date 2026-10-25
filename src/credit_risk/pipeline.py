@@ -795,6 +795,29 @@ def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
                                          *(f"monitor/{path.name}" for path in paths)])
 
 
+
+def _ews(ctx: RunContext, sources: Sequence[str]) -> None:
+    """Stage 9: early warning on the Freddie Mac panel - label, features, models, watchlist, survival."""
+    if "freddie_mac" not in sources:
+        ctx.record("ews", "stub", "freddie_mac not in sources; nothing to score")
+        return
+    from credit_risk.ews.engine import EwsFailed, run_ews, write_outputs
+
+    try:
+        result = run_ews(ctx.settings, ctx.config, ctx.run_id)
+    except (EwsFailed, FileNotFoundError, KeyError, ValueError) as exc:
+        raise StepFailed(f"ews: {exc}") from exc
+    paths = write_outputs(result, ctx.run_dir / "ews")
+    p = result.provenance
+    oot = p["out_of_time"]
+    detail = (f"selected {p['selected_model']}; out-of-time "
+              + (f"PR AUC {oot.get('pr_auc', float('nan')):.3f}, capture top 5% {oot.get('capture_top_5pct', float('nan')):.1%}; "
+                 if oot else "not available; ")
+              + f"watchlist {p['scoring_month']}: {p['watchlist']['listed']:,} of {p['watchlist']['scoring_rows']:,} loans; "
+              f"{p['checks_total']} checks, {p['checks_failed']} failed")
+    log.info("  ews: %s", detail)
+    ctx.record("ews", "ok", detail, [*(f"ews/{path.relative_to(ctx.run_dir / 'ews').as_posix()}" for path in paths)])
+
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:
     def run(ctx: RunContext, sources: Sequence[str]) -> None:
         log.info("[stub] %s - not implemented yet (roadmap stage %s)", step, stage)
@@ -811,7 +834,7 @@ STEPS: dict[str, Callable[[RunContext, Sequence[str]], None]] = {
     "calibrate": _calibrate,
     "validate-model": _validate_model,
     "monitor": _monitor,
-    "ews": _stub("ews", "9"),
+    "ews": _ews,
     "report": _stub("report", "7 and 10"),
 }
 

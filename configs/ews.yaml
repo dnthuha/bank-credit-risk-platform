@@ -167,10 +167,12 @@ ews:
     # Mô hình cho watchlist: mô hình có selection_metric trên validation cao hơn.
     selection_metric: pr_auc
   # Quyết định 2026-10-25: không hiệu chỉnh lại mức PD; báo cáo calibration riêng từng đoạn.
-  segments: [split, regime, fico_band, ltv_band, bucket_at_t, vintage_year]
+  # Phân khúc đánh giá trong từng đoạn validation / stress / out-of-time.
+  segments: [bucket_at_t, fico_band, ltv_band, vintage_year]
   baseline_model: logistic_regression
   challenger_model: lightgbm
-  evaluation_metrics: [pr_auc, roc_auc, lift_top_5pct, capture_top_10pct, brier]
+  # capture / precision / lift ở top k%: xếp hạng trong từng tháng, như watchlist (top 5% = capacity_share).
+  evaluation_metrics: [pr_auc, roc_auc, capture_top_5pct, precision_top_5pct, lift_top_5pct, capture_top_10pct, brier]
   alert:
     method: capacity
     capacity_share: 0.05   # đội vận hành xử lý được 5% khoản vay mỗi tháng
@@ -187,7 +189,7 @@ ews:
     limitations:
       - "Nhãn: lần đầu vào 90+ DPD (gồm RA) hoặc thanh lý trong t+1..t+3; khoản đã 90+, đã thoát, hoặc trạng thái XX tại t không thuộc cohort; cửa sổ thiếu tháng hoặc kết thúc bằng exit không rõ kết cục bị loại."
       - "Split theo tháng quan sát, mỗi đoạn lùi 3 tháng để cửa sổ nhãn không chạm đoạn sau. Cùng một khoản vay có thể có mặt ở nhiều đoạn (ở các tháng khác nhau): đây là out-of-time theo thời gian, không phải theo khoản vay."
-      - "Train chỉ gồm 2014-01 → 2018-09; 2020-03 → 2021-09 (COVID) là stress test, không train. Tỷ lệ sự kiện ở out-of-time khoảng gấp đôi train nên PD tuyệt đối thấp hơn thực tế; watchlist xếp hạng theo điểm nên không phụ thuộc mức PD. PD không được hiệu chỉnh lại."
+      - "Train chỉ gồm 2014-01 → 2018-09; 2020-03 → 2021-09 (COVID) là stress test, không train. Tỷ lệ sự kiện đổi mạnh giữa các đoạn (khoảng 0.12% train, 0.9% stress, 0.25% out-of-time) và cơ cấu cohort cũng đổi, nên mức PD tuyệt đối không khớp thực tế ở mọi đoạn (xem Calibration). PD không được hiệu chỉnh lại; watchlist xếp hạng theo điểm nên không phụ thuộc mức PD."
       - "Cờ payment deferral gần như chỉ xuất hiện từ 2020 (chương trình COVID), forbearance và modification hiếm trong train: mô hình học rất ít từ các cờ này dù chúng có mặt."
       - "Không có biến kinh tế vĩ mô (lãi suất thị trường, giá nhà, thất nghiệp): thay đổi môi trường chỉ được phản ánh gián tiếp qua hành vi trả nợ."
       - "Survival là mô tả (Kaplan-Meier, Aalen-Johansen), không có covariate; giả định censoring không mang thông tin, và khoản other_exit bị coi là censored."
