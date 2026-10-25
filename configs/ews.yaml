@@ -100,9 +100,94 @@ ews:
     - already_90plus_at_t            # đã xấu sẵn, không phải "sắp xấu"
     - status_not_available_at_t      # mã XX: không biết trạng thái tại t
     - incomplete_performance_window  # thiếu tháng, exit không rõ kết cục, hoặc hết dữ liệu trước t+3
+  # Số khoản lấy mẫu (seed ở đầu file) để đối chiếu nhãn SQL trên toàn panel với labels.py (pandas).
+  reference_sample_loans: 20000
+  # Tháng chấm điểm watchlist; null = tháng mới nhất có trong dữ liệu (chưa có nhãn).
+  scoring_month: null
+  # Quyết định 2026-10-25 (chặng 9): train giữ mọi event và một mẫu ngẫu nhiên non-event,
+  # mỗi non-event mang trọng số 1 / non_event_rate để PD không bị lệch lên.
+  # Validation / stress / out-of-time được chấm điểm đầy đủ.
+  train_sample:
+    non_event_rate: 0.05
+  # Feature tại tháng t, chỉ từ các dòng <= t (lịch sử tối đa definitions.windows.observation_months).
+  # Cột gốc mà feature đọc phải có use: true trong feature_availability.yaml (freddie_mac).
+  # Quyết định 2026-10-25: dùng cả cờ hỗ trợ của servicer (forbearance, deferral, modification).
+  features:
+    numeric:
+      # lúc giải ngân
+      - fico
+      - orig_ltv
+      - orig_cltv
+      - orig_dti
+      - orig_interest_rate
+      - orig_upb
+      - orig_loan_term
+      - mi_pct
+      - num_borrowers
+      - num_units
+      # hành vi tại t và trong cửa sổ quan sát
+      - mob
+      - bucket_num               # 0 current, 1 dpd30, 2 dpd60 (90+ tại t đã bị loại khỏi cohort)
+      - bucket_change_1m         # bucket_num(t) - bucket_num(t-1); 0 khi không có tháng trước
+      - months_30plus_window     # số tháng 30+ trong cửa sổ
+      - max_bucket_window
+      - months_since_delinquent  # từ lần 30+ gần nhất trong toàn lịch sử; 999 = chưa từng
+      - ever_90plus_before_t
+      - history_months_window    # số tháng có dữ liệu trong cửa sổ
+      - upb_ratio                # current_upb / orig_upb
+      - paydown_window           # (upb đầu cửa sổ - upb tại t) / orig_upb
+      - rate_change              # current_interest_rate - orig_interest_rate
+      - non_interest_bearing_share
+      - assistance_months_window
+      - modified
+      - payment_deferral
+      - disaster
+    categorical:
+      - occupancy_status
+      - loan_purpose
+      - channel
+      - property_type
+      - first_time_homebuyer
+      - harp_indicator
+      - property_state
+      - assistance_plan_at_t     # F forbearance, R repayment, T trial, none
+    categorical_min_share: 0.001  # mức hiếm hơn gộp vào "other" (đếm trên mẫu train)
+  models:
+    baseline:                    # logistic regression trên feature chuẩn hoá + one-hot
+      C: 1.0
+      max_iter: 2000
+    challenger:                  # LightGBM; chọn cấu hình theo selection_metric trên validation
+      n_estimators: 2000
+      early_stopping_rounds: 100
+      grid:
+        - {num_leaves: 15, learning_rate: 0.05, min_child_samples: 200, reg_lambda: 1.0}
+        - {num_leaves: 31, learning_rate: 0.05, min_child_samples: 200, reg_lambda: 1.0}
+        - {num_leaves: 63, learning_rate: 0.03, min_child_samples: 500, reg_lambda: 5.0}
+      common: {subsample: 0.8, subsample_freq: 1, colsample_bytree: 0.8}
+    # Mô hình cho watchlist: mô hình có selection_metric trên validation cao hơn.
+    selection_metric: pr_auc
+  # Quyết định 2026-10-25: không hiệu chỉnh lại mức PD; báo cáo calibration riêng từng đoạn.
+  segments: [split, regime, fico_band, ltv_band, bucket_at_t, vintage_year]
   baseline_model: logistic_regression
   challenger_model: lightgbm
   evaluation_metrics: [pr_auc, roc_auc, lift_top_5pct, capture_top_10pct, brier]
   alert:
     method: capacity
     capacity_share: 0.05   # đội vận hành xử lý được 5% khoản vay mỗi tháng
+    reason_codes: 3        # số yếu tố đóng góp lớn nhất ghi cạnh mỗi khoản trong watchlist
+  # Quyết định 2026-10-25: survival mô tả, tự viết (numpy). Thời gian = MOB; khoản bị cắt trái
+  # vào risk set từ MOB đầu tiên có dữ liệu (delayed entry). Prepayment là competing risk:
+  # Kaplan-Meier coi payoff là censored (cause-specific), Aalen-Johansen ước lượng
+  # cumulative incidence của default và payoff cùng lúc. other_exit và còn hoạt động = censored.
+  survival:
+    groups: [vintage_year, fico_band, ltv_band]
+    checkpoints: [12, 24, 36, 60]
+    min_at_risk: 500           # curve một nhóm dừng khi risk set nhỏ hơn mức này
+  report:
+    limitations:
+      - "Nhãn: lần đầu vào 90+ DPD (gồm RA) hoặc thanh lý trong t+1..t+3; khoản đã 90+, đã thoát, hoặc trạng thái XX tại t không thuộc cohort; cửa sổ thiếu tháng hoặc kết thúc bằng exit không rõ kết cục bị loại."
+      - "Split theo tháng quan sát, mỗi đoạn lùi 3 tháng để cửa sổ nhãn không chạm đoạn sau. Cùng một khoản vay có thể có mặt ở nhiều đoạn (ở các tháng khác nhau): đây là out-of-time theo thời gian, không phải theo khoản vay."
+      - "Train chỉ gồm 2014-01 → 2018-09; 2020-03 → 2021-09 (COVID) là stress test, không train. Tỷ lệ sự kiện ở out-of-time khoảng gấp đôi train nên PD tuyệt đối thấp hơn thực tế; watchlist xếp hạng theo điểm nên không phụ thuộc mức PD. PD không được hiệu chỉnh lại."
+      - "Cờ payment deferral gần như chỉ xuất hiện từ 2020 (chương trình COVID), forbearance và modification hiếm trong train: mô hình học rất ít từ các cờ này dù chúng có mặt."
+      - "Không có biến kinh tế vĩ mô (lãi suất thị trường, giá nhà, thất nghiệp): thay đổi môi trường chỉ được phản ánh gián tiếp qua hành vi trả nợ."
+      - "Survival là mô tả (Kaplan-Meier, Aalen-Johansen), không có covariate; giả định censoring không mang thông tin, và khoản other_exit bị coi là censored."
