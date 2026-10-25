@@ -778,6 +778,7 @@ def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
         ctx.record("monitor", "stub", "freddie_mac not in sources; nothing to monitor")
         return
     from credit_risk.monitoring import portfolio as pf
+    from credit_risk.monitoring import roll as rl
     from credit_risk.monitoring import vintage as vt
     from credit_risk.monitoring.panel import PanelSpec, build_panel, panel_checks
 
@@ -825,6 +826,16 @@ def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
     curves_year.to_csv(out_dir / "vintage_curves_year.csv", index=False)
     sections.append(vt.vintage_markdown(curves_year, loans, vt_checks))
 
+    # 8.3 roll rates and migration
+    counts = rl.transition_counts(con, folder)
+    rates = rl.roll_rates(counts)
+    rl_checks = rl.roll_checks(con, folder, counts, month, int(ctx.config.ews["monitoring"].get("reference_sample_loans", 20000)),
+                               int(ctx.config.ews.get("seed", 0)))
+    all_checks.append(rl_checks.assign(module="roll"))
+    counts.to_csv(out_dir / "transition_counts.csv", index=False)
+    rates.to_csv(out_dir / "roll_rates.csv", index=False)
+    sections.append(rl.roll_markdown(counts, rates, monthly.set_index("period")["regime"], month, rl_checks))
+
     checks_all = pd.concat(all_checks, ignore_index=True)
     checks_all.to_csv(out_dir / "checks.csv", index=False)
     (out_dir / "monitoring_report.md").write_text(
@@ -839,6 +850,7 @@ def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
     ctx.record("monitor", "ok", detail, [
         panel_path.relative_to(ctx.settings.data_dir).as_posix(), "monitor/panel_checks.csv", "monitor/panel_summary.json",
         "monitor/portfolio_monthly.csv", "monitor/vintage_curves.csv", "monitor/vintage_curves_year.csv",
+        "monitor/transition_counts.csv", "monitor/roll_rates.csv",
         "monitor/checks.csv", "monitor/monitoring_report.md"])
 
 

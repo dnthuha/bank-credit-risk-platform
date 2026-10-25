@@ -26,6 +26,8 @@ monitoring:
     # Không dùng "mọi khoản" (= 1.0): dưới 0.1% khoản mỗi lứa có loan_age 0 muộn hơn quý trong
     # loan_id hàng năm trời và sẽ cắt cụt curve. Với 0.99, phần đuôi bị kéo thấp tối đa 1% tương đối.
     min_reach_share: 0.99
+  # Số khoản lấy mẫu (seed ở đầu file) để đối chiếu migration tháng báo cáo với transitions.py (pandas).
+  reference_sample_loans: 20000
   # Band phân khúc, cận hai đầu đều tính vào band; giá trị thiếu -> "missing".
   bands:
     fico:
