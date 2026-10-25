@@ -12,8 +12,10 @@ built in DuckDB (35.6M rows do not fit in pandas on this laptop) and written to
     exit_type                       payoff | liquidation | other_exit | NULL
     is_bad, first_bad               90+ or liquidation; the first such month
     upb, removal_upb                current_upb; UPB removed at zero balance
-    prev_bucket, prev_upb,          the same loan's previous month, NULL unless
-    prev_exit_type, has_prev        that month is exactly one month earlier
+    has_prev                        TRUE when the loan has a row exactly one month
+                                    earlier, FALSE otherwise (never NULL)
+    prev_bucket, prev_upb,          that previous row's values, NULL when has_prev
+    prev_exit_type                  is FALSE
     left_truncated                  first reported loan_age > max_first_loan_age
     fico_band, ltv_band, dti_band   bands from ews.yaml (missing -> "missing")
     property_state, channel, harp   segment columns from origination
@@ -154,7 +156,7 @@ def build_panel_sql(folder: Path, spec: PanelSpec) -> str:
     SELECT w.loan_id, w.period, w.mob, w.vintage_year, w.vintage, w.bucket, w.exit_type, w.is_bad,
            coalesce(w.period = w.first_bad_period, FALSE) AS first_bad,
            w.upb, w.removal_upb,
-           (w.lag_period = w.period - INTERVAL 1 MONTH) AS has_prev,
+           coalesce(w.lag_period = w.period - INTERVAL 1 MONTH, FALSE) AS has_prev,
            CASE WHEN w.lag_period = w.period - INTERVAL 1 MONTH THEN w.lag_bucket END AS prev_bucket,
            CASE WHEN w.lag_period = w.period - INTERVAL 1 MONTH THEN w.lag_upb END AS prev_upb,
            CASE WHEN w.lag_period = w.period - INTERVAL 1 MONTH THEN w.lag_exit_type END AS prev_exit_type,

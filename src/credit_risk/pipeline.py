@@ -777,6 +777,7 @@ def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
     if "freddie_mac" not in sources:
         ctx.record("monitor", "stub", "freddie_mac not in sources; nothing to monitor")
         return
+    from credit_risk.monitoring import portfolio as pf
     from credit_risk.monitoring.panel import PanelSpec, build_panel, panel_checks
 
     folder = ctx.settings.processed_dir / "freddie_mac"
@@ -798,12 +799,34 @@ def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
     if not checks["ok"].all():
         failed = "; ".join(checks.loc[~checks["ok"], "check"])
         raise StepFailed(f"monitor: panel checks failed: {failed}")
+    all_checks = [checks.assign(module="panel")]
+
+    # 8.1 portfolio metrics per month
+    try:
+        pf_spec = pf.PortfolioSpec.from_config(ctx.config.ews, ctx.config.definitions)
+        monthly = pf.portfolio_monthly(con, folder, pf_spec)
+        month = pf.reporting_month(monthly, pf_spec)
+    except (KeyError, ValueError) as exc:
+        raise StepFailed(f"monitor: {exc}") from exc
+    pf_checks = pf.portfolio_checks(con, folder, monthly, pf_spec, month)
+    all_checks.append(pf_checks.assign(module="portfolio"))
+    monthly.to_csv(out_dir / "portfolio_monthly.csv", index=False)
+    sections = [pf.portfolio_markdown(monthly, month, pf_checks)]
+
+    checks_all = pd.concat(all_checks, ignore_index=True)
+    checks_all.to_csv(out_dir / "checks.csv", index=False)
+    (out_dir / "monitoring_report.md").write_text(
+        f"# Báo cáo giám sát danh mục — run `{ctx.run_id}`\n\nTháng báo cáo **{month:%Y-%m}**. "
+        f"Kiểm tra: {len(checks_all)} ({int((~checks_all['ok']).sum())} lệch).\n\n" + "\n".join(sections), encoding="utf-8")
+    row = monthly[monthly["period"] == month].iloc[0]
     detail = (f"panel {summary['rows']:,} rows, {summary['loans']:,} loans, {summary['first_month']}..{summary['last_month']}; "
-              f"{len(checks)} checks passed; {summary['left_truncated_loans']:,} left-truncated loans "
-              f"({summary['left_truncated_share']:.1%}) kept out of vintage curves")
+              f"{summary['left_truncated_loans']:,} left-truncated loans ({summary['left_truncated_share']:.1%}) kept out of "
+              f"vintage curves; {month:%Y-%m}: 90+ {row['dpd90plus_rate_count']:.3%} of loans / {row['dpd90plus_rate_upb']:.3%} of UPB; "
+              f"{len(checks_all)} checks, {int((~checks_all['ok']).sum())} failed")
     log.info("  monitor: %s", detail)
     ctx.record("monitor", "ok", detail, [
-        panel_path.relative_to(ctx.settings.data_dir).as_posix(), "monitor/panel_checks.csv", "monitor/panel_summary.json"])
+        panel_path.relative_to(ctx.settings.data_dir).as_posix(), "monitor/panel_checks.csv", "monitor/panel_summary.json",
+        "monitor/portfolio_monthly.csv", "monitor/checks.csv", "monitor/monitoring_report.md"])
 
 
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:

@@ -83,7 +83,8 @@ def test_buckets_exits_and_bad_flags(panel):
 
 def test_previous_month_columns_break_at_a_gap(panel):
     d = rows(panel, "F19Q30000004")                                  # months 0, 2, 3 reported
-    assert d["has_prev"].fillna(False).tolist() == [False, False, True]
+    assert d["has_prev"].tolist() == [False, False, True]
+    assert panel["has_prev"].notna().all()
     assert pd.isna(d["prev_bucket"][1]) and d["prev_bucket"][2] == "dpd30"
     a = rows(panel, "F19Q10000001")
     assert a["prev_bucket"].tolist()[1:] == ["current", "dpd30", "dpd60", "dpd90plus"]
