@@ -36,7 +36,8 @@ def test_full_pipeline_runs_end_to_end(raw_data):
     assert (settings.processed_dir / "home_credit" / "model_package" / "package.json").exists()
     assert (settings.processed_dir / "freddie_mac" / "performance.parquet").exists()
     assert (settings.processed_dir / "freddie_mac" / "monitoring_panel.parquet").exists()
-    assert (run_dir / "monitor" / "panel_summary.json").exists()
+    assert (run_dir / "monitor" / "monitoring_metrics.json").exists()
+    assert (run_dir / "monitor" / "monitoring_report.md").exists()
     assert (settings.processed_dir / "home_credit" / "_ingest_manifest.json").exists()
 
     splits = pd.read_parquet(settings.processed_dir / "home_credit" / "splits.parquet")

@@ -773,99 +773,26 @@ def _validate_model(ctx: RunContext, sources: Sequence[str]) -> None:
 
 
 def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
-    """Stage 8: portfolio monitoring on the Freddie Mac panel."""
+    """Stage 8: portfolio monitoring on the Freddie Mac panel - metrics, curves, migration, concentration, alerts."""
     if "freddie_mac" not in sources:
         ctx.record("monitor", "stub", "freddie_mac not in sources; nothing to monitor")
         return
-    from credit_risk.monitoring import concentration as cn
-    from credit_risk.monitoring import portfolio as pf
-    from credit_risk.monitoring import roll as rl
-    from credit_risk.monitoring import vintage as vt
-    from credit_risk.monitoring.panel import PanelSpec, build_panel, panel_checks
+    from credit_risk.monitoring.engine import MonitoringFailed, run_monitoring, write_outputs
 
-    folder = ctx.settings.processed_dir / "freddie_mac"
-    if not (folder / "performance.parquet").exists():
-        raise StepFailed("monitor: performance.parquet missing; run ingest for freddie_mac first")
-    out_dir = ctx.run_dir / "monitor"
-    out_dir.mkdir(parents=True, exist_ok=True)
     try:
-        spec = PanelSpec.from_config(ctx.config.ews, ctx.config.definitions)
-    except (KeyError, ValueError) as exc:
+        result = run_monitoring(ctx.settings, ctx.config, ctx.run_id)
+    except (MonitoringFailed, FileNotFoundError, KeyError, ValueError) as exc:
         raise StepFailed(f"monitor: {exc}") from exc
-    con = connect(ctx.settings)
-
-    # 8.0 panel
-    panel_path = build_panel(con, folder, spec)
-    checks, summary = panel_checks(con, folder, spec)
-    checks.to_csv(out_dir / "panel_checks.csv", index=False)
-    (out_dir / "panel_summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
-    if not checks["ok"].all():
-        failed = "; ".join(checks.loc[~checks["ok"], "check"])
-        raise StepFailed(f"monitor: panel checks failed: {failed}")
-    all_checks = [checks.assign(module="panel")]
-
-    # 8.1 portfolio metrics per month
-    try:
-        pf_spec = pf.PortfolioSpec.from_config(ctx.config.ews, ctx.config.definitions)
-        monthly = pf.portfolio_monthly(con, folder, pf_spec)
-        month = pf.reporting_month(monthly, pf_spec)
-    except (KeyError, ValueError) as exc:
-        raise StepFailed(f"monitor: {exc}") from exc
-    pf_checks = pf.portfolio_checks(con, folder, monthly, pf_spec, month)
-    all_checks.append(pf_checks.assign(module="portfolio"))
-    monthly.to_csv(out_dir / "portfolio_monthly.csv", index=False)
-    sections = [pf.portfolio_markdown(monthly, month, pf_checks)]
-
-    # 8.2 vintage curves: configured granularity for the file, by year for the report
-    loans = vt.loan_outcomes(con, folder)
-    reach = float(ctx.config.ews["monitoring"]["vintage_curve"].get("min_reach_share", 0.99))
-    curves = vt.vintage_curves(loans, "vintage", reach)
-    curves_year = vt.vintage_curves(loans, "vintage_year", reach)
-    vt_checks = vt.vintage_checks(con, folder, loans, curves, "vintage")
-    all_checks.append(vt_checks.assign(module="vintage"))
-    curves.to_csv(out_dir / "vintage_curves.csv", index=False)
-    curves_year.to_csv(out_dir / "vintage_curves_year.csv", index=False)
-    sections.append(vt.vintage_markdown(curves_year, loans, vt_checks))
-
-    # 8.3 roll rates and migration
-    counts = rl.transition_counts(con, folder)
-    rates = rl.roll_rates(counts)
-    rl_checks = rl.roll_checks(con, folder, counts, month, int(ctx.config.ews["monitoring"].get("reference_sample_loans", 20000)),
-                               int(ctx.config.ews.get("seed", 0)))
-    all_checks.append(rl_checks.assign(module="roll"))
-    counts.to_csv(out_dir / "transition_counts.csv", index=False)
-    rates.to_csv(out_dir / "roll_rates.csv", index=False)
-    sections.append(rl.roll_markdown(counts, rates, monthly.set_index("period")["regime"], month, rl_checks))
-
-    # 8.4 concentration and segments
-    psi_cfg = ctx.config.definitions["metric_thresholds"]["psi"]
-    dims = list(ctx.config.ews["monitoring"]["concentration_dimensions"])
-    seg_table = cn.segment_table(con, folder, dims, month)
-    view = cn.reporting_view(seg_table, month)
-    conc = cn.concentration_summary(seg_table, month, float(psi_cfg["zero_bin_epsilon"]))
-    cn_checks = cn.concentration_checks(seg_table, monthly, month)
-    all_checks.append(cn_checks.assign(module="concentration"))
-    seg_table.to_csv(out_dir / "segments_monthly.csv", index=False)
-    conc.to_csv(out_dir / "concentration.csv", index=False)
-    sections.append(cn.concentration_markdown(view, conc, month, cn_checks, float(psi_cfg["stable_below"]),
-                                              float(psi_cfg["significant_above"]), cn.group_order(spec.bands)))
-
-    checks_all = pd.concat(all_checks, ignore_index=True)
-    checks_all.to_csv(out_dir / "checks.csv", index=False)
-    (out_dir / "monitoring_report.md").write_text(
-        f"# Báo cáo giám sát danh mục — run `{ctx.run_id}`\n\nTháng báo cáo **{month:%Y-%m}**. "
-        f"Kiểm tra: {len(checks_all)} ({int((~checks_all['ok']).sum())} lệch).\n\n" + "\n".join(sections), encoding="utf-8")
-    row = monthly[monthly["period"] == month].iloc[0]
-    detail = (f"panel {summary['rows']:,} rows, {summary['loans']:,} loans, {summary['first_month']}..{summary['last_month']}; "
-              f"{summary['left_truncated_loans']:,} left-truncated loans ({summary['left_truncated_share']:.1%}) kept out of "
-              f"vintage curves; {month:%Y-%m}: 90+ {row['dpd90plus_rate_count']:.3%} of loans / {row['dpd90plus_rate_upb']:.3%} of UPB; "
-              f"{len(checks_all)} checks, {int((~checks_all['ok']).sum())} failed")
+    paths = write_outputs(result, ctx.run_dir / "monitor")
+    p = result.provenance
+    row = result.tables["portfolio_monthly"].set_index("period").loc[result.month]
+    detail = (f"{p['reporting_month']}: status {result.status} ({p['alerts']['red']} red, {p['alerts']['amber']} amber); "
+              f"90+ {row['dpd90plus_rate_count']:.3%} of loans / {row['dpd90plus_rate_upb']:.3%} of UPB; "
+              f"panel {p['panel']['rows']:,} rows, {p['panel']['loans']:,} loans; "
+              f"{p['checks_total']} checks, {p['checks_failed']} failed")
     log.info("  monitor: %s", detail)
-    ctx.record("monitor", "ok", detail, [
-        panel_path.relative_to(ctx.settings.data_dir).as_posix(), "monitor/panel_checks.csv", "monitor/panel_summary.json",
-        "monitor/portfolio_monthly.csv", "monitor/vintage_curves.csv", "monitor/vintage_curves_year.csv",
-        "monitor/transition_counts.csv", "monitor/roll_rates.csv", "monitor/segments_monthly.csv", "monitor/concentration.csv",
-        "monitor/checks.csv", "monitor/monitoring_report.md"])
+    ctx.record("monitor", "ok", detail, [result.panel_path.relative_to(ctx.settings.data_dir).as_posix(),
+                                         *(f"monitor/{path.name}" for path in paths)])
 
 
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:

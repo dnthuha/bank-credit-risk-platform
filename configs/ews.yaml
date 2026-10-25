@@ -53,6 +53,38 @@ monitoring:
     baseline_trailing_months: 12
     amber_relative_increase: 0.20
     red_relative_increase: 0.50
+    # Chỉ số danh mục (portfolio_monthly) và roll rate (roll_rates); worse = chiều xấu đi.
+    metrics:
+      - {name: dpd30plus_rate_count,      worse: higher}
+      - {name: dpd30plus_rate_upb,        worse: higher}
+      - {name: dpd90plus_rate_count,      worse: higher}
+      - {name: dpd90plus_rate_upb,        worse: higher}
+      - {name: new_default_rate_count,    worse: higher}
+      - {name: new_default_rate_upb,      worse: higher}
+      - {name: current_to_dpd30_count,    worse: higher}
+      - {name: dpd30_to_dpd60_count,      worse: higher}
+      - {name: dpd60_to_dpd90plus_count,  worse: higher}
+      - {name: dpd30_to_current_count,    worse: lower}
+    # Tỷ lệ 90+ (số khoản) của từng nhóm so với tỷ lệ gộp 12 tháng trước của chính nhóm đó.
+    segments:
+      dimensions: [fico_band, ltv_band, dti_band, property_state, channel]
+      min_loans: 2000                 # nhóm nhỏ hơn: quá nhiễu để cảnh báo, vẫn hiện trong bảng
+    # PSI cơ cấu dư nợ so với 12 tháng trước; ngưỡng ở definitions.metric_thresholds.psi.
+    mix_psi:
+      exclude_dimensions: [vintage]   # cơ cấu lứa đổi theo thiết kế mẫu (50k khoản mới mỗi năm)
+    # Chất lượng lứa mới: default cộng dồn (số khoản) của lứa gần nhất đã đạt MOB k
+    # so với trung bình các lứa chuẩn ở cùng MOB.
+    new_vintage:
+      mobs: [12, 24]
+      benchmark_vintages: [2012, 2013, 2014, 2015, 2016]
+  report:
+    limitations:
+      - "Freddie Mac sample dataset: 50,000 khoản ngẫu nhiên mỗi lứa, không phải toàn bộ danh mục; cơ cấu theo lứa đổi theo thiết kế mẫu chứ không theo chính sách cho vay."
+      - "SMM / CPR chỉ tính khoản trả hết nợ; dữ liệu không có trả trước một phần, nên đây là cận dưới của SMM thường dùng."
+      - "Vintage curve chỉ gồm khoản có lịch sử từ đầu (dòng đầu loan_age <= 1); khoản bị cắt trái không vào curve. Curve dừng ở MOB mà min_reach_share của pool đã có thể đạt tới."
+      - "2020-03 → 2021-12 là giai đoạn COVID (stress segment): forbearance làm tỷ lệ quá hạn tăng không phản ánh rủi ro thông thường; mốc so sánh 12 tháng trượt không còn chạm giai đoạn này từ 2023-01."
+      - "Cảnh báo so với trung bình 12 tháng trước là tín hiệu tương đối: một danh mục xấu đi chậm và đều sẽ không bị cảnh báo theo cách này. Vintage curve và so sánh theo giai đoạn bổ sung góc nhìn dài hạn."
+      - "Mã trạng thái XX (không rõ) không được đoán: khoản đó nằm ngoài mẫu số của tỷ lệ quá hạn trong tháng."
 
 ews:
   # Split theo observation month t. Cuối mỗi đoạn lùi 3 tháng để cửa sổ nhãn
