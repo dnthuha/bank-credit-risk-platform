@@ -24,8 +24,8 @@ def test_full_pipeline_runs_end_to_end(raw_data):
     statuses = {s["step"]: s["status"] for s in manifest["steps"]}
     assert statuses["ingest"] == statuses["validate-data"] == statuses["features"] == "ok"
     assert statuses["train"] == statuses["calibrate"] == "ok"
-    assert statuses["validate-model"] == "ok"
-    assert all(statuses[s] == "stub" for s in list(STEPS)[6:])
+    assert statuses["validate-model"] == statuses["monitor"] == "ok"
+    assert all(statuses[s] == "stub" for s in list(STEPS)[7:])
     assert manifest["run_id"].endswith(manifest["config_hash"][:8])
     assert manifest["packages"]["duckdb"] is not None
 
@@ -35,6 +35,8 @@ def test_full_pipeline_runs_end_to_end(raw_data):
     assert (settings.processed_dir / "home_credit" / "scorecard.json").exists()
     assert (settings.processed_dir / "home_credit" / "model_package" / "package.json").exists()
     assert (settings.processed_dir / "freddie_mac" / "performance.parquet").exists()
+    assert (settings.processed_dir / "freddie_mac" / "monitoring_panel.parquet").exists()
+    assert (run_dir / "monitor" / "panel_summary.json").exists()
     assert (settings.processed_dir / "home_credit" / "_ingest_manifest.json").exists()
 
     splits = pd.read_parquet(settings.processed_dir / "home_credit" / "splits.parquet")

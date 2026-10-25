@@ -772,6 +772,40 @@ def _validate_model(ctx: RunContext, sources: Sequence[str]) -> None:
     ctx.record("validate-model", "ok", summary, [f"validate-model/{path.name}" for path in paths])
 
 
+def _monitor(ctx: RunContext, sources: Sequence[str]) -> None:
+    """Stage 8: portfolio monitoring on the Freddie Mac panel."""
+    if "freddie_mac" not in sources:
+        ctx.record("monitor", "stub", "freddie_mac not in sources; nothing to monitor")
+        return
+    from credit_risk.monitoring.panel import PanelSpec, build_panel, panel_checks
+
+    folder = ctx.settings.processed_dir / "freddie_mac"
+    if not (folder / "performance.parquet").exists():
+        raise StepFailed("monitor: performance.parquet missing; run ingest for freddie_mac first")
+    out_dir = ctx.run_dir / "monitor"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        spec = PanelSpec.from_config(ctx.config.ews, ctx.config.definitions)
+    except (KeyError, ValueError) as exc:
+        raise StepFailed(f"monitor: {exc}") from exc
+    con = connect(ctx.settings)
+
+    # 8.0 panel
+    panel_path = build_panel(con, folder, spec)
+    checks, summary = panel_checks(con, folder, spec)
+    checks.to_csv(out_dir / "panel_checks.csv", index=False)
+    (out_dir / "panel_summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+    if not checks["ok"].all():
+        failed = "; ".join(checks.loc[~checks["ok"], "check"])
+        raise StepFailed(f"monitor: panel checks failed: {failed}")
+    detail = (f"panel {summary['rows']:,} rows, {summary['loans']:,} loans, {summary['first_month']}..{summary['last_month']}; "
+              f"{len(checks)} checks passed; {summary['left_truncated_loans']:,} left-truncated loans "
+              f"({summary['left_truncated_share']:.1%}) kept out of vintage curves")
+    log.info("  monitor: %s", detail)
+    ctx.record("monitor", "ok", detail, [
+        panel_path.relative_to(ctx.settings.data_dir).as_posix(), "monitor/panel_checks.csv", "monitor/panel_summary.json"])
+
+
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:
     def run(ctx: RunContext, sources: Sequence[str]) -> None:
         log.info("[stub] %s - not implemented yet (roadmap stage %s)", step, stage)
@@ -787,7 +821,7 @@ STEPS: dict[str, Callable[[RunContext, Sequence[str]], None]] = {
     "train": _train,
     "calibrate": _calibrate,
     "validate-model": _validate_model,
-    "monitor": _stub("monitor", "8"),
+    "monitor": _monitor,
     "ews": _stub("ews", "9"),
     "report": _stub("report", "7 and 10"),
 }

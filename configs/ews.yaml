@@ -15,6 +15,38 @@ monitoring:
   vintage_granularity: quarter
   delinquency_rates: [dpd30, dpd60, dpd90plus]
   concentration_dimensions: [fico_band, ltv_band, dti_band, property_state, vintage, channel]
+  # Quyết định 2026-10-25 (chặng 8): mọi tỷ lệ báo cáo cả theo số khoản và theo dư nợ (current_upb).
+  weights: [count, upb]
+  vintage_curve:
+    # Static pool chỉ gồm khoản có lịch sử từ đầu: dòng performance đầu tiên có loan_age <= 1.
+    # Khoản bị cắt trái (vào panel muộn hơn) bị loại khỏi curve và được đếm trong báo cáo;
+    # delayed entry để dành cho survival (chặng 9).
+    max_first_loan_age: 1
+  # Band phân khúc, cận hai đầu đều tính vào band; giá trị thiếu -> "missing".
+  bands:
+    fico:
+      - {label: "<620",    max: 619}
+      - {label: "620-679", min: 620, max: 679}
+      - {label: "680-739", min: 680, max: 739}
+      - {label: "740-779", min: 740, max: 779}
+      - {label: "780+",    min: 780}
+    ltv:
+      - {label: "<=60",    max: 60}
+      - {label: "61-80",   min: 61, max: 80}
+      - {label: "81-90",   min: 81, max: 90}
+      - {label: "91-95",   min: 91, max: 95}
+      - {label: "96-100",  min: 96, max: 100}
+      - {label: ">100",    min: 101}          # gần như chỉ HARP
+    dti:
+      - {label: "<=36",    max: 36}
+      - {label: "37-43",   min: 37, max: 43}
+      - {label: "44-50",   min: 44, max: 50}
+      - {label: ">50",     min: 51}
+  alerts:
+    # Tháng báo cáo so với trung bình của 12 tháng ngay trước nó.
+    baseline_trailing_months: 12
+    amber_relative_increase: 0.20
+    red_relative_increase: 0.50
 
 ews:
   # Split theo observation month t. Cuối mỗi đoạn lùi 3 tháng để cửa sổ nhãn
