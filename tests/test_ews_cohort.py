@@ -8,7 +8,6 @@ check compares all rows.
 
 import copy
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -17,39 +16,7 @@ from credit_risk.ews import cohort as ch
 from credit_risk.ews.labels import build_ews_labels
 from credit_risk.monitoring.panel import PanelSpec, build_panel
 
-START, END = pd.Period("2018-01", "M"), pd.Period("2020-12", "M")
-
-
-def markov_loans(n=300, seed=3):
-    rng = np.random.default_rng(seed)
-    perf, orig = [], []
-    for i in range(n):
-        loan_id = f"F17Q{i % 4 + 1}{i:07d}"
-        orig.append({"loan_id": loan_id, "orig_upb": 100000.0, "fico": 700, "orig_ltv": 80, "orig_dti": 35,
-                     "property_state": "CA", "channel": "R", "harp_indicator": "N", "source_file": "sample_orig_2017.txt"})
-        month, state, age = START + int(rng.integers(0, 6)), 0, int(rng.integers(0, 3))
-        while month <= END:
-            u, zb = rng.random(), None
-            if state == 0:
-                state = 1 if u < 0.06 else 0
-                zb = "01" if u > 0.98 else None
-            elif state == 1:
-                state = 0 if u < 0.4 else 2 if u < 0.75 else 1
-            elif state == 2:
-                state = 0 if u < 0.2 else 3 if u < 0.7 else 2
-            else:
-                zb = "03" if u < 0.1 else "96" if u < 0.12 else None
-                state = 0 if u > 0.85 else state + 1
-            status = "XX" if rng.random() < 0.01 else "RA" if state >= 6 else f"{min(state, 99):02d}"
-            if rng.random() > 0.01 or zb:                                  # ~1% of months not reported
-                perf.append({"loan_id": loan_id, "period": month.to_timestamp().date(), "loan_age": age,
-                             "current_upb": 0.0 if zb else 90000.0, "zero_balance_removal_upb": 90000.0 if zb else None,
-                             "delinquency_status": status, "zero_balance_code": zb})
-            if zb:
-                break
-            month, age = month + 1, age + 1
-    return pd.DataFrame(perf), pd.DataFrame(orig)
-
+from conftest import ews_markov_loans
 
 @pytest.fixture
 def spec(project_config):
@@ -65,7 +32,7 @@ def spec(project_config):
 def built(settings, project_config, spec):
     folder = settings.processed_dir / "freddie_mac"
     folder.mkdir(parents=True)
-    perf, orig = markov_loans()
+    perf, orig = ews_markov_loans()
     perf.to_parquet(folder / "performance.parquet", index=False)
     orig.to_parquet(folder / "origination.parquet", index=False)
     con = connect(settings)

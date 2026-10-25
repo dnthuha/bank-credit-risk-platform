@@ -20,7 +20,9 @@
 # xuất hiện trong dữ liệu không thể lọt vào mô hình khi chưa ai phân loại nó.
 #
 # Số liệu trong caveat lấy từ docs/data_quality_home_credit.md (dữ liệu 2026-09-18).
-# Ma trận cho Freddie Mac sẽ lập ở Stage 9, khi dựng panel.
+# Freddie Mac (Stage 9, EWS): "thời điểm quan sát" là tháng t của panel. at_application = biết từ
+# lúc giải ngân; historical = trạng thái tháng t hoặc trước đó (feature chỉ đọc các dòng <= t);
+# post_decision = chỉ có khi khoản vay đã thoát (zero balance) hoặc sau sự kiện -> không dùng.
 # =====================================================================
 version: 1
 
@@ -173,3 +175,55 @@ home_credit:
       AMT_PAYMENT:
         availability: historical
         caveat: "2,905 dòng thiếu cùng DAYS_ENTRY_PAYMENT: gắn cờ, không điền 0"
+
+freddie_mac:
+  origination:
+    grain: "Một khoản vay tại thời điểm giải ngân"
+    evidence: "Thuộc tính của hồ sơ lúc giải ngân, không cập nhật theo tháng; mã thiếu (9999, 999) đã đổi thành NULL lúc ingest."
+    default: {availability: at_application}
+    columns:
+      loan_id: {availability: identifier}
+      source_file: {availability: identifier}
+      pre_harp_loan_id: {availability: identifier}
+      seller_name: {availability: at_application, use: false, caveat: "Nhiều mức hiếm, đổi theo thời gian: không mô hình hoá"}
+      postal_code: {availability: at_application, use: false, caveat: "Quá chi tiết; dùng property_state"}
+      msa: {availability: at_application, use: false, caveat: "Quá chi tiết; dùng property_state"}
+      first_payment_date: {availability: at_application, use: false, caveat: "Thông tin thời gian đã có trong mob"}
+      maturity_date: {availability: at_application, use: false, caveat: "Trùng với orig_loan_term"}
+      property_valuation_method: {availability: at_application, use: false, caveat: "Chỉ có từ lứa 2017"}
+      vantagescore4: {availability: at_application, use: false, caveat: "Chưa có dữ liệu"}
+      prepayment_penalty: {availability: at_application, use: false, caveat: "Hằng số"}
+      amortization_type: {availability: at_application, use: false, caveat: "Hằng số"}
+      interest_only_indicator: {availability: at_application, use: false, caveat: "Hằng số"}
+      super_conforming_flag: {availability: at_application, use: false, caveat: "Gần như hằng số"}
+      special_eligibility_program: {availability: at_application, use: false, caveat: "Gần như hằng số"}
+      orig_dti: {availability: at_application, caveat: "Thiếu ở 47,975 khoản HARP (chương trình không yêu cầu DTI): missing có cấu trúc"}
+      orig_ltv: {availability: at_application, caveat: "HARP có LTV > 100% (tới 684%)"}
+
+  performance:
+    grain: "Một khoản vay trong một tháng báo cáo"
+    evidence: >-
+      Mỗi dòng mô tả khoản vay tại tháng báo cáo của nó. Feature EWS tại t chỉ đọc các dòng có
+      period <= t (window frame kết thúc ở CURRENT ROW), nên cột historical không chứa thông tin
+      sau t. Các cột chỉ được điền khi khoản vay thoát hoặc sau thanh lý là post_decision.
+    default: {availability: post_decision}
+    columns:
+      loan_id: {availability: identifier}
+      period: {availability: identifier}
+      source_file: {availability: identifier}
+      delinquency_status: {availability: historical, caveat: "XX = không rõ: dòng đó không thuộc cohort EWS"}
+      loan_age: {availability: historical}
+      current_upb: {availability: historical, caveat: "Bằng 0 ở tháng zero balance: dòng đó không thuộc cohort"}
+      current_interest_rate: {availability: historical}
+      current_non_interest_bearing_upb: {availability: historical, caveat: "Khác 0 chủ yếu sau deferral / modification"}
+      modification_flag: {availability: historical, caveat: "Y = sửa đổi trong tháng, P = đã sửa đổi trước đó"}
+      payment_deferral_flag: {availability: historical, caveat: "Gần như chỉ có từ 2020 (chương trình COVID)"}
+      borrower_assistance_plan: {availability: historical, caveat: "F forbearance, R repayment, T trial; hiếm trước 2020"}
+      delinquency_due_to_disaster: {availability: historical}
+      remaining_months_to_maturity: {availability: historical, use: false, caveat: "Trùng thông tin với mob và orig_loan_term"}
+      interest_rate_step_indicator: {availability: historical, use: false, caveat: "Gần như hằng số"}
+      current_interest_bearing_upb: {availability: historical, use: false, caveat: "Trùng với current_upb trừ non-interest-bearing"}
+      eltv: {availability: historical, use: false, caveat: "Chỉ có từ 2017-04: không phủ giai đoạn train 2014-2018"}
+      mi_cancellation_indicator: {availability: historical, use: false, caveat: "Chỉ có từ 2015-01"}
+      servicer_name: {availability: historical, use: false, caveat: "Đổi theo thời gian, nhiều mức hiếm"}
+      zero_balance_code: {availability: post_decision, caveat: "Chỉ có ở tháng thoát: dùng cho nhãn, không làm feature"}

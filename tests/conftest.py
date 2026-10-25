@@ -389,3 +389,55 @@ def stage8_build(tmp_path_factory):
     write_freddie_panel_raw(settings)
     assert run_pipeline(steps=["ingest"], sources=["freddie_mac"], settings=settings) == 0
     return settings, load_config(settings.config_dir)
+
+
+def ews_markov_loans(n: int = 300, seed: int = 3, start: str = "2018-01", end: str = "2020-12",
+                     vintage: int = 2017) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(performance, origination) frames in the processed layout, for the EWS stage.
+
+    Buckets follow a Markov chain with payoffs, liquidations, other exits, unknown
+    (XX) months, ~1% unreported months and re-defaults after cure, so every
+    branch of the label is hit. Servicer flags appear now and then and lower
+    FICO raises the chance of a missed payment, so the models have a signal.
+    """
+    rng = np.random.default_rng(seed)
+    first, last = pd.Period(start, "M"), pd.Period(end, "M")
+    perf, orig = [], []
+    for i in range(n):
+        loan_id = f"F{vintage % 100:02d}Q{i % 4 + 1}{i:07d}"
+        fico = int(rng.integers(600, 820))
+        orig.append({"loan_id": loan_id, "orig_upb": 100000.0 + 1000 * (i % 50), "fico": fico, "orig_ltv": int(rng.integers(50, 97)),
+                     "orig_cltv": 80, "orig_dti": None if i % 25 == 0 else int(rng.integers(20, 50)),
+                     "orig_interest_rate": 4.0, "orig_loan_term": 360, "mi_pct": 0, "num_borrowers": 1 + i % 2, "num_units": 1,
+                     "occupancy_status": "P" if i % 7 else "I", "loan_purpose": "PCN"[i % 3], "channel": "RCB"[i % 3],
+                     "property_type": "SF", "first_time_homebuyer": "N", "harp_indicator": "N",
+                     "property_state": ["CA", "TX", "FL", "NY"][i % 4], "source_file": f"sample_orig_{vintage}.txt"})
+        miss = 0.03 + 0.10 * (820 - fico) / 220
+        month, state, age, upb = first + int(rng.integers(0, 6)), 0, int(rng.integers(0, 3)), 100000.0
+        while month <= last:
+            u, zb = rng.random(), None
+            if state == 0:
+                state = 1 if u < miss else 0
+                zb = "01" if u > 0.98 else None
+            elif state == 1:
+                state = 0 if u < 0.4 else 2 if u < 0.75 else 1
+            elif state == 2:
+                state = 0 if u < 0.2 else 3 if u < 0.7 else 2
+            else:
+                zb = "03" if u < 0.1 else "96" if u < 0.12 else None
+                state = 0 if u > 0.85 else state + 1
+            status = "XX" if rng.random() < 0.01 else "RA" if state >= 6 else f"{min(state, 99):02d}"
+            upb = upb - 150.0 if state == 0 else upb
+            if rng.random() > 0.01 or zb:                                  # ~1% of months not reported
+                perf.append({"loan_id": loan_id, "period": month.to_timestamp().date(), "loan_age": age,
+                             "current_upb": 0.0 if zb else upb, "zero_balance_removal_upb": upb if zb else None,
+                             "delinquency_status": status, "zero_balance_code": zb,
+                             "current_interest_rate": 4.0 if rng.random() > 0.01 else 3.0,
+                             "current_non_interest_bearing_upb": 0.0 if state < 2 else 500.0,
+                             "modification_flag": "P" if (i % 40 == 0 and age > 3) else None,
+                             "payment_deferral_flag": None, "delinquency_due_to_disaster": "Y" if rng.random() < 0.005 else None,
+                             "borrower_assistance_plan": "F" if state >= 2 and rng.random() < 0.3 else None})
+            if zb:
+                break
+            month, age = month + 1, age + 1
+    return pd.DataFrame(perf), pd.DataFrame(orig)
