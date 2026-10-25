@@ -26,7 +26,7 @@ import duckdb
 import pandas as pd
 
 from credit_risk.data.db import sql_str
-from credit_risk.ews.cohort import INCOMPLETE_WINDOW, LABELS_FILE
+from credit_risk.ews.cohort import INCOMPLETE_WINDOW, LABELS_FILE, SPLITS
 from credit_risk.features.availability import AvailabilityMatrix
 from credit_risk.monitoring.panel import PanelSpec, band_sql, bucket_sql
 
@@ -199,7 +199,7 @@ def dataset_checks(con: duckdb.DuckDBPyConnection, folder: Path, spec: FeatureSp
     got = con.execute(f"""
         SELECT split, count(*), sum(y) FROM read_parquet({data}) WHERE split <> '{SCORING}' GROUP BY split
     """).df().set_index("split")
-    for split in claimed.index:
+    for split in [s for s in SPLITS if s in claimed.index]:  # fixed order: GROUP BY output order is not stable
         add(f"{split}: dataset rows = labelled cohort rows", int(claimed.loc[split].iloc[0]),
             int(got.loc[split].iloc[0]) if split in got.index else 0, LABELS_FILE)
         add(f"{split}: dataset events = labelled events", int(claimed.loc[split].iloc[1]),
