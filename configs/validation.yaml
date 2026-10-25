@@ -86,3 +86,14 @@ conclusion_rules:
       remediate_below: 0.60
     group_auc_gap:                     # AUC nhóm nhạy cảm thấp hơn tổng thể quá ngưỡng
       note_below_minus: 0.05
+
+# Báo cáo thẩm định (chặng 7.3): phần "Phạm vi và giới hạn" in nguyên văn các dòng dưới đây,
+# rồi thêm những giới hạn engine tự phát hiện trong lần chạy (phân khúc không tính được...).
+report:
+  limitations:
+    - "Không có out-of-time: Home Credit không có ngày nộp đơn, nên train / validation / calibration / test là mẫu ngẫu nhiên phân tầng cùng kỳ (60/10/15/15). Hiệu năng trên test là hiệu năng cùng kỳ, không phải hiệu năng tương lai; độ ổn định theo thời gian chỉ đo được trên Freddie Mac (chặng 8-9)."
+    - "application_test không có TARGET: trên dân số mới chỉ đo được PSI, không đo được sức phân biệt hay hiệu chỉnh."
+    - "application_test có cơ cấu sản phẩm khác train (Revolving loans 0.9% so với 9.5%), nên PSI được tách theo NAME_CONTRACT_TYPE; một phần PSI tổng thể là do khác biệt cơ cấu này, không phải do hành vi khách hàng thay đổi."
+    - "Khoảng tin cậy bootstrap là percentile đơn giản; các so sánh theo nhóm nhạy cảm chưa hiệu chỉnh đa so sánh, nên một vài cờ công bằng có thể là nhiễu mẫu."
+    - "CODE_GENDER, NAME_FAMILY_STATUS và DAYS_BIRTH được giữ trong scorecard theo tiêu chí thống kê (PROJECT_SCOPE #7). Mô hình không phù hợp để dùng thật ở nơi luật cấm các thuộc tính này, bất kể kết luận bên trên."
+    - "Tỷ lệ duyệt / từ chối trong phần công bằng và phần so sánh dùng một quy tắc chung (PD đã calibrate > segment_options.reject_rule.pd_above), không phải chính sách duyệt thật."

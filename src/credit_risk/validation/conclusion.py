@@ -379,3 +379,21 @@ def conclusion_markdown(conclusion: Conclusion) -> str:
         mark = {"pass": "đạt", "note": "**lưu ý**", "remediate": "**KHẮC PHỤC**", "skipped": "bỏ qua"}[r.outcome]
         lines.append(f"| {r.rule} | {r.model} | {r.value} | {r.threshold} | {mark} | {r.detail} |")
     return "\n".join(lines) + "\n"
+
+
+def actions_markdown(conclusion: Conclusion) -> str:
+    """What each model needs before (or as a condition of) use: remediate items first, then notes."""
+    lines = ["## Việc cần làm", ""]
+    for model in MODELS:
+        todo = sorted((r for r in conclusion.results if r.model == model and r.outcome in ("remediate", "note")),
+                      key=lambda r: -RANK[r.outcome])
+        lines.append(f"**{model}** ({conclusion.verdict_text(model)})")
+        lines.append("")
+        if not todo:
+            lines += ["Không có.", ""]
+            continue
+        for r in todo:
+            tag = "Khắc phục" if r.outcome == "remediate" else "Lưu ý"
+            lines.append(f"- [{tag}] `{r.rule}`: {r.detail} {r.recommendation}".rstrip())
+        lines.append("")
+    return "\n".join(lines)

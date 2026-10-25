@@ -750,7 +750,7 @@ def _calibrate(ctx: RunContext, sources: Sequence[str]) -> None:
 
 
 def _validate_model(ctx: RunContext, sources: Sequence[str]) -> None:
-    """Stage 6: independent validation of the frozen package - recount everything, write metrics + report."""
+    """Stages 6-7: independent validation of the frozen package - recount everything, conclude, write metrics + report."""
     if "home_credit" not in sources:
         ctx.record("validate-model", "stub", "home_credit not in sources; nothing to validate yet")
         return
@@ -766,7 +766,8 @@ def _validate_model(ctx: RunContext, sources: Sequence[str]) -> None:
     paths = write_outputs(result, out_dir, ctx.settings)
     p = result.provenance
     summary = (f"package {p['package_fingerprint'][:12]}: {p['checks_total']} checks, {p['checks_failed']} failed, "
-               f"{p['findings']} findings")
+               f"{p['findings']} findings; champion {p['verdicts']['champion']}, challenger {p['verdicts']['challenger']}, "
+               f"deploy {p['deploy'] or 'none'}")
     log.info("  validate-model: %s", summary)
     ctx.record("validate-model", "ok", summary, [f"validate-model/{path.name}" for path in paths])
 

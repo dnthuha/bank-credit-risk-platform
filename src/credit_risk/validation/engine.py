@@ -8,19 +8,23 @@ files the pipeline step records:
                            findings list, and the provenance (package and
                            split fingerprints, seed, config hash, versions,
                            sample sizes);
-    validation_report.md   the same, for a reader, section by section.
+    validation_report.md   the same, for a reader: conclusion and
+                           recommendation first, then what each model needs,
+                           the scope and limitations, and every module.
 
 Order and stopping rule
     package -> population -> discrimination -> calibration -> stability ->
-    uncertainty -> segments -> implementation. A package that fails its
-    integrity checks or a population that does not reconcile stops the run:
-    every later number would be about a model or a sample other than the
-    one the model card describes.
+    uncertainty -> segments -> comparison -> implementation -> conclusion.
+    A package that fails its integrity checks or a population that does not
+    reconcile stops the run: every later number would be about a model or a
+    sample other than the one the model card describes.
 
 Findings are collected, not judged: each failed check and each flagged item
 (red PSI, a mis-calibrated band or group, a fairness gap) becomes one
-finding with a severity hint. The approve / remediate conclusion is Stage
-7's job (`validation.yaml -> conclusion_rules`).
+finding with a severity hint. The judgement comes last (Stage 7.3): the
+rules of `validation.yaml -> conclusion_rules` read the same records
+metrics.json carries and give each model a verdict and the pair a
+recommendation, so the conclusion can be recomputed from metrics.json alone.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ from credit_risk.features.split import SplitSpec
 from credit_risk.settings import Settings
 from credit_risk.validation import calibration_check as cal
 from credit_risk.validation import comparison as cmp
+from credit_risk.validation import conclusion as concl
 from credit_risk.validation import discrimination as disc
 from credit_risk.validation import implementation as impl
 from credit_risk.validation import population as pop
@@ -66,6 +71,8 @@ class ValidationResult:
     findings: list[dict[str, Any]] = field(default_factory=list)
     markdown: dict[str, str] = field(default_factory=dict)
     provenance: dict[str, Any] = field(default_factory=dict)
+    limitations: list[str] = field(default_factory=list)                # configured, then found in this run
+    conclusion: concl.Conclusion | None = None
 
     @property
     def ok(self) -> bool:
@@ -275,6 +282,25 @@ def run_validation(settings: Settings, config: ProjectConfig, run_id: str, sourc
         "checks_total": int(len(result.checks)), "checks_failed": int((~result.checks["ok"]).sum()),
         "findings": len(result.findings),
     }
+
+    # Limitations: the configured ones, then what this run could not do
+    result.limitations = [str(x) for x in (validation.get("report") or {}).get("limitations") or []]
+    if seg_missing:
+        result.limitations.append("Không tính được phân khúc " + ", ".join(f"{m.name} ({m.column})" for m in seg_missing)
+                                  + ": thiếu cột trong features.parquet.")
+    if split_summary is None:
+        result.limitations.append("Không tìm thấy splits_summary.json của run features có cùng fingerprint split: "
+                                  "dân số chỉ được đối chiếu với gói, không với run features.")
+    for label, run in (("train", train_run), ("calibrate", dev_run)):
+        if not run.exists():
+            result.limitations.append(f"artifacts/{run.name}/ (run {label}) không còn trên máy: các kiểm tra "
+                                      "đối chiếu với con số công bố của run này không đầy đủ.")
+
+    # 7.3 conclusion: the rules read the records metrics.json carries, nothing else
+    result.conclusion = concl.conclude(metrics_payload(result), validation)
+    result.provenance["headline_sample"] = str(validation["conclusion_rules"].get("headline_sample", "test"))
+    result.provenance["verdicts"] = dict(result.conclusion.verdicts)
+    result.provenance["deploy"] = result.conclusion.recommendation.get("deploy")
     return result
 
 
@@ -287,21 +313,59 @@ def metrics_payload(result: ValidationResult) -> dict[str, Any]:
         "provenance": result.provenance,
         "checks": result.checks,
         "findings": result.findings,
+        "limitations": result.limitations,
+        "conclusion": result.conclusion.to_dict() if result.conclusion else None,
         "sections": {name: {k: v for k, v in section.items()} for name, section in result.sections.items()},
     })
+
+
+def _ci(row: pd.DataFrame) -> str:
+    if row.empty:
+        return "-"
+    r = row.iloc[0]
+    return f"{r['estimate']:.4f} [{r['ci_low']:.4f}, {r['ci_high']:.4f}]"
+
+
+def headline_markdown(result: ValidationResult, sample: str) -> str:
+    """The figures the verdicts lean on most, one row per model, on the headline sample."""
+    intervals = result.sections["uncertainty"]["intervals"]
+    cal_summary = result.sections["calibration"]["summary"]
+    stab_table = result.sections["stability"]["table"]
+    lines = [f"## Con số chính ({sample})", "",
+             "| Mô hình | AUC [95%] | Gini [95%] | KS [95%] | Slope | Bad rate / PD | PSI đầu ra (application_test) |",
+             "|---|---|---|---|---:|---:|---|"]
+    for model in concl.MODELS:
+        iv = intervals[(intervals["model"] == model) & (intervals["split"] == sample)]
+        cal_row = cal_summary[(cal_summary["model"] == model) & (cal_summary["split"] == sample)]
+        psi = stab_table[(stab_table["kind"] == "output") & (stab_table["model"] == model)
+                         & (stab_table["current"] == "application_test") & (stab_table["segment"] == "all")]
+        slope = f"{cal_row['slope'].iloc[0]:.3f}" if not cal_row.empty else "-"
+        ratio = f"{cal_row['ratio_bad_rate_to_pd'].iloc[0]:.3f}" if not cal_row.empty else "-"
+        psi_text = f"{psi['psi'].iloc[0]:.4f} ({psi['light'].iloc[0]})" if not psi.empty else "-"
+        lines.append(f"| {model} | {_ci(iv[iv['metric'] == 'auc'])} | {_ci(iv[iv['metric'] == 'gini'])} | "
+                     f"{_ci(iv[iv['metric'] == 'ks'])} | {slope} | {ratio} | {psi_text} |")
+    return "\n".join(lines) + "\n"
 
 
 def report_markdown(result: ValidationResult, settings: Settings) -> str:
     p = result.provenance
     failed = result.checks[~result.checks["ok"]]
+    c = result.conclusion
+    verdict = (f"**Kết luận:** champion {c.verdict_text('champion')}, challenger {c.verdict_text('challenger')}."
+               if c else "**Kết luận:** không có (thiếu conclusion_rules).")
     lines = [f"# Báo cáo thẩm định độc lập — run `{p['run_id']}`", "",
              f"Gói model `{p['package_fingerprint'][:12]}` (champion `{p['champion_fingerprint'][:12]}`, challenger "
              f"`{p['challenger_fingerprint'][:12]}`, split `{p['split_fingerprint'][:12]}`), đóng băng ở run `{p['package_run_id']}`. "
              f"Config hash `{p['config_hash'][:12]}`, seed {p['seed']}, bootstrap {p['bootstrap_resamples']:,} lần, "
              f"mẫu đối chiếu triển khai {p['implementation_sample']:,} hồ sơ.", "",
-             f"**Kiểm tra:** {p['checks_total']} ({p['checks_failed']} lệch). **Phát hiện:** {p['findings']}. "
-             "Kết luận phê duyệt / khắc phục: chặng 7.", "",
-             "| Module | Kiểm tra | Lệch |", "|---|---:|---:|"]
+             f"**Kiểm tra:** {p['checks_total']} ({p['checks_failed']} lệch). **Phát hiện:** {p['findings']}. {verdict}", ""]
+    if c:
+        lines += [concl.conclusion_markdown(c).rstrip(), ""]
+        lines += [headline_markdown(result, p.get("headline_sample", "test")).rstrip(), ""]
+        lines += [concl.actions_markdown(c).rstrip(), ""]
+    lines += ["## Phạm vi và giới hạn", ""]
+    lines += [f"- {x}" for x in result.limitations] or ["Không ghi nhận."]
+    lines += ["", "## Kiểm tra theo module", "", "| Module | Kiểm tra | Lệch |", "|---|---:|---:|"]
     for module, part in result.checks.groupby("module", sort=False):
         lines.append(f"| {module} | {len(part)} | {int((~part['ok']).sum())} |")
     lines += ["", "## Phát hiện", ""]

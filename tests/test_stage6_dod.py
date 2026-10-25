@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from credit_risk.pipeline import run_pipeline
+from credit_risk.validation.conclusion import conclude
 from credit_risk.validation.engine import MODULES
 
 
@@ -102,3 +103,34 @@ def test_findings_are_listed_with_module_and_severity(stage6_build):
     assert metrics["provenance"]["checks_failed"] == len(failed)
     assert metrics["provenance"]["findings"] == len(metrics["findings"])
     assert "## Phát hiện" in report
+
+
+def test_the_report_opens_with_the_conclusion_that_metrics_json_reproduces(stage6_build):
+    """Stage 7.3: the verdicts are in metrics.json, recomputable from it alone, and lead the report."""
+    settings, config = stage6_build
+    manifest, metrics, report = validate(settings)
+    c = metrics["conclusion"]
+    assert set(c["verdicts"]) == {"champion", "challenger"}
+    recomputed = conclude({k: v for k, v in metrics.items() if k != "conclusion"}, config.validation)
+    assert recomputed.to_dict() == c
+    assert metrics["provenance"]["verdicts"] == {m: v["code"] for m, v in c["verdicts"].items()}
+    assert metrics["provenance"]["deploy"] == c["recommendation"]["deploy"]
+    step = next(s for s in manifest["steps"] if s["step"] == "validate-model")
+    assert f"champion {c['verdicts']['champion']['code']}" in step["detail"]
+    order = [report.index(h) for h in ("## Kết luận", "## Con số chính (test)", "## Việc cần làm",
+                                       "## Phạm vi và giới hạn", "## Kiểm tra theo module", "## Phát hiện")]
+    assert order == sorted(order)
+    assert c["recommendation"]["text"] in report
+    for model in ("champion", "challenger"):
+        assert f"{model} {c['verdicts'][model]['text']}" in report
+        assert f"**{model}** ({c['verdicts'][model]['text']})" in report
+
+
+def test_the_limitations_come_from_the_config_and_from_the_run(stage6_build):
+    settings, config = stage6_build
+    _, metrics, report = validate(settings)
+    configured = config.validation["report"]["limitations"]
+    assert metrics["limitations"][:len(configured)] == configured
+    assert any("out-of-time" in x for x in configured)
+    for line in metrics["limitations"]:
+        assert f"- {line}" in report
