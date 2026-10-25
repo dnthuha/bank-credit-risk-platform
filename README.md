@@ -32,7 +32,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 | 6 | Validation engine | **Xong** (tag `v0.6-validation`): một lệnh tính lại mọi chỉ số từ gói đóng băng, 252 kiểm tra, 0 lệch, 17 phát hiện; test Gini 0.505 / 0.563; `metrics.json` + báo cáo. [Tổng kết](docs/stage6_validation.md) |
 | 7 | Validation report tự động | **Xong**: 11 quy tắc trong `validation.yaml` cho kết luận từng mô hình (champion Phải khắc phục: AIR 0.56 cho người dưới 30; challenger Đạt có lưu ý) và khuyến nghị (triển khai challenger kèm điều kiện); so sánh hai mô hình; báo cáo mở đầu bằng kết luận, việc cần làm, giới hạn. [Tổng kết](docs/stage7_validation_report.md) |
 | 8 | Portfolio monitoring | **Xong**: panel 35.6 triệu dòng dựng bằng DuckDB; chỉ số danh mục theo số khoản và dư nợ, vintage curve, roll rate / migration, phân khúc và tập trung; 38 kiểm tra, 0 lệch. 2026-03: chỉ số tháng xanh, nhưng trạng thái đỏ vì lứa 2023-2024 có default ở cùng MOB cao gấp khoảng 3 lần lứa 2012-2016. [Tổng kết](docs/stage8_monitoring.md) |
-| 9 | Survival và EWS | |
+| 9 | Survival và EWS | **Xong**: nhãn 90+ trong 3 tháng trên toàn panel (SQL khớp tuyệt đối bản pandas), 34 feature chỉ từ dòng ≤ t, logistic baseline và LightGBM; 52 kiểm tra, 0 lệch. Out-of-time 2022-2025: watchlist top 5% mỗi tháng bắt được 90.3% sự kiện (51.5% với khoản đang current), lift 18. Watchlist 2026-03: 16,159 khoản kèm reason code. Survival: CIF default MOB 60 là 3.3%, trả trước 46.8%. [Tổng kết](docs/stage9_early_warning.md) |
 | 10 | Dashboard, demo | |
 
 ## Cài đặt (Windows, Python 3.13)
