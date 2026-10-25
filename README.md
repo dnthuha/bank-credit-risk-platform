@@ -15,6 +15,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 - Stage 4, LightGBM challenger: [docs/stage4_lightgbm.md](docs/stage4_lightgbm.md)
 - Stage 5, calibration và model package: [docs/stage5_calibration.md](docs/stage5_calibration.md)
 - Stage 6, validation engine (thẩm định độc lập): [docs/stage6_validation.md](docs/stage6_validation.md)
+- Stage 7, validation report tự động có kết luận: [docs/stage7_validation_report.md](docs/stage7_validation_report.md)
 - Định nghĩa nghiệp vụ (single source of truth): [configs/definitions.yaml](configs/definitions.yaml)
 
 ## Trạng thái
@@ -27,7 +28,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 | 4 | LightGBM challenger | **Xong**: 192 biến, 30 cấu hình có log, SHAP; Gini validation 0.580 (+0.064 so với champion, lạc quan). [Tổng kết](docs/stage4_lightgbm.md) |
 | 5 | Calibration, đóng băng model | **Xong**: Platt cho cả hai mô hình (chọn bằng CV), slope validation 1.00 / 1.01; model package fingerprint `c95dc90913d8` (đổi cách băm ở chặng 6.0, trước là `35e42a5f208b`). [Tổng kết](docs/stage5_calibration.md) |
 | 6 | Validation engine | **Xong** (tag `v0.6-validation`): một lệnh tính lại mọi chỉ số từ gói đóng băng, 252 kiểm tra, 0 lệch, 17 phát hiện; test Gini 0.505 / 0.563; `metrics.json` + báo cáo. [Tổng kết](docs/stage6_validation.md) |
-| 7 | Validation report tự động | |
+| 7 | Validation report tự động | **Xong**: 11 quy tắc trong `validation.yaml` cho kết luận từng mô hình (champion Phải khắc phục: AIR 0.56 cho người dưới 30; challenger Đạt có lưu ý) và khuyến nghị (triển khai challenger kèm điều kiện); so sánh hai mô hình; báo cáo mở đầu bằng kết luận, việc cần làm, giới hạn. [Tổng kết](docs/stage7_validation_report.md) |
 | 8 | Portfolio monitoring | |
 | 9 | Survival và EWS | |
 | 10 | Dashboard, demo | |
@@ -64,10 +65,10 @@ python -m credit_risk run --source freddie_mac             # chỉ một nguồn
 | 3 | `features` | Split, availability matrix, bảng feature cấp hồ sơ, binning + WoE fit trên train, báo cáo IV, shortlist (M1); panel + biến trễ (M3) còn lại | `data/processed/home_credit/{splits,features}.parquet`, `binning.json`, `shortlist.json`, `artifacts/<run_id>/features/` |
 | 4 | `train` | Scorecard: logistic trên WoE, loại biến sai / không ổn định dấu, quy đổi điểm, mã lý do, model card; LightGBM challenger: 30 cấu hình, early stopping, SHAP, so với champion (M1) | `data/processed/home_credit/{scorecard.json,scores.parquet,challenger.json,challenger_model.txt,challenger_scores.parquet}`, `artifacts/<run_id>/train/` |
 | 5 | `calibrate` | Platt / isotonic trên calibration sample, chọn bằng CV; đóng băng model package | `data/processed/home_credit/model_package/`, `artifacts/<run_id>/calibrate/` |
-| 6 | `validate-model` | Tính lại độc lập AUC/Gini/KS, PSI, bootstrap | *stub, chặng 6* |
+| 6 | `validate-model` | Thẩm định độc lập gói đóng băng: tính lại AUC/Gini/KS, hiệu chỉnh, PSI, bootstrap, phân khúc, so sánh hai mô hình, chấm lại; áp quy tắc kết luận | `artifacts/<run_id>/validate-model/{metrics.json,validation_report.md}` |
 | 7 | `monitor` | Vintage, roll rate, migration | *stub, chặng 8* |
 | 8 | `ews` | Cohort, nhãn 3 tháng, model, watchlist | *stub, chặng 9* |
-| 9 | `report` | Model card, validation report, dữ liệu dashboard | *stub, chặng 7 và 10* |
+| 9 | `report` | Dữ liệu dashboard | *stub, chặng 10* |
 
 Mỗi lần chạy sinh một `run_id` (`<UTC time>-<config hash>`). File `artifacts/<run_id>/run_manifest.json` ghi lại config hash, seed, git commit, phiên bản thư viện và trạng thái từng bước.
 
@@ -88,7 +89,8 @@ bank-credit-risk-platform/
 │   ├── data/                     # contracts, ingest, validate (DuckDB)
 │   ├── features/                 # split.py, availability.py, build.py, binning.py, iv_report.py, selection.py, woe.py
 │   ├── models/                   # scorecard.py (champion), challenger.py (LightGBM, SHAP), calibration.py
-│   ├── validation/               # metrics.py: AUC, Gini, KS, Brier, PSI
+│   ├── validation/               # metrics.py, package, population, discrimination, calibration_check, stability,
+│   │                             # uncertainty, segments, comparison, implementation, conclusion, engine.py
 │   ├── monitoring/               # buckets.py, transitions.py (roll rate)
 │   ├── ews/                      # labels.py: nhãn 90+ DPD trong 3 tháng
 │   ├── reporting/                # model_card.py, challenger_report.py, calibration_report.py
