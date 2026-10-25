@@ -20,7 +20,9 @@ def validate(settings):
 
 
 def read_last_run(settings):
-    run_dir = max(p for p in settings.artifacts_dir.iterdir() if (p / "run_manifest.json").exists())
+    # newest manifest, not the largest name: runs in the same second differ only by config hash
+    run_dir = max((p for p in settings.artifacts_dir.iterdir() if (p / "run_manifest.json").exists()),
+                  key=lambda p: (p / "run_manifest.json").stat().st_mtime_ns)
     manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
     out = run_dir / "validate-model"
     metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8")) if (out / "metrics.json").exists() else None

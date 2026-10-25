@@ -306,3 +306,86 @@ def stage6_build(tmp_path_factory):
     steps = ["ingest", "validate-data", "features", "train", "calibrate"]
     assert run_pipeline(steps=steps, sources=["home_credit"], settings=settings) == 0
     return settings, load_config(settings.config_dir)
+
+
+# ---------------------------------------------------------------------------
+# Stage 8: a multi-vintage Freddie Mac panel, monitored by the real pipeline
+# ---------------------------------------------------------------------------
+
+STATES = ["CA", "TX", "FL", "NY", "IL", "PA"]
+
+
+def write_freddie_panel_raw(settings: Settings, vintages=(2014, 2015, 2017), loans_per_vintage: int = 400,
+                            end: str = "2019-06", seed: int = 11) -> Path:
+    """Loans that move between buckets by a Markov chain, pay off, roll to 90+ and get liquidated.
+
+    One in twenty loans enters the panel at loan_age 6 (left truncated). Every loan
+    starts in the first month of its origination quarter and runs until it exits or
+    the panel ends at `end`.
+    """
+    rng = np.random.default_rng(seed)
+    raw = settings.raw_dir / "freddie_mac"
+    raw.mkdir(parents=True, exist_ok=True)
+    orig_cols, perf_cols = freddie_columns("origination"), freddie_columns("performance")
+    last = pd.Period(end, "M")
+    for year in vintages:
+        orig_lines, perf_lines = [], []
+        for i in range(loans_per_vintage):
+            quarter = i % 4 + 1
+            loan_id = f"F{year % 100:02d}Q{quarter}{i:07d}"
+            start = pd.Period(f"{year}-{3 * quarter - 2:02d}", "M")
+            age0 = 6 if i % 20 == 0 else 0
+            orig_lines.append(_pipe_line(orig_cols, {
+                "fico": str(int(rng.integers(600, 820))), "first_payment_date": (start + 1).strftime("%Y%m"),
+                "first_time_homebuyer": "N", "maturity_date": f"{year + 30}01", "msa": "", "mi_pct": "0", "num_units": "1",
+                "occupancy_status": "P", "orig_cltv": "80", "orig_dti": str(int(rng.integers(20, 50))), "orig_upb": "200000.00",
+                "orig_ltv": str(int(rng.integers(55, 98))), "orig_interest_rate": "4.0", "channel": str(rng.choice(["R", "C", "B"])),
+                "prepayment_penalty": "N", "amortization_type": "FRM", "property_state": str(rng.choice(STATES)),
+                "property_type": "SF", "postal_code": "945", "loan_id": loan_id, "loan_purpose": "P", "orig_loan_term": "360",
+                "num_borrowers": "2", "seller_name": "OTHER", "super_conforming_flag": "N", "harp_indicator": "N",
+                "property_valuation_method": "2", "interest_only_indicator": "N", "vantagescore4": "9999",
+            }))
+            state, upb, month = 0, 200000.0, start + age0
+            while month <= last:
+                zb = ""
+                u = rng.random()
+                if state == 0:
+                    state = 1 if u < 0.02 else 0
+                    zb = "01" if u > 0.985 else ""
+                elif state == 1:
+                    state = 0 if u < 0.5 else 2 if u < 0.75 else 1
+                elif state == 2:
+                    state = 0 if u < 0.2 else 3 if u < 0.6 else 2
+                else:
+                    zb = "03" if u < 0.08 else ""
+                    state = 0 if u > 0.92 else state + 1
+                upb = max(upb - 300.0, 0.0)
+                perf_lines.append(_pipe_line(perf_cols, {
+                    "loan_id": loan_id, "period": month.strftime("%Y%m"), "current_upb": "0.00" if zb else f"{upb:.2f}",
+                    "delinquency_status": f"{min(state, 99):02d}", "loan_age": str((month - start).n),
+                    "remaining_months_to_maturity": "300", "zero_balance_code": zb,
+                    "zero_balance_effective_date": month.strftime("%Y%m") if zb else "",
+                    "zero_balance_removal_upb": f"{upb:.2f}" if zb else "",
+                    "current_interest_rate": "4.0", "current_non_interest_bearing_upb": "0.00", "eltv": "999",
+                    "current_interest_bearing_upb": f"{upb:.2f}", "mi_cancellation_indicator": "7", "servicer_name": "OTHER",
+                }))
+                if zb:
+                    break
+                month += 1
+        (raw / f"sample_orig_{year}.txt").write_text("\n".join(orig_lines) + "\n", encoding="utf-8")
+        (raw / f"sample_perf_{year}.txt").write_text("\n".join(perf_lines) + "\n", encoding="utf-8")
+    return raw
+
+
+@pytest.fixture(scope="session")
+def stage8_build(tmp_path_factory):
+    """(settings, config) after ingest on the synthetic multi-vintage panel; tests run monitor themselves."""
+    from credit_risk.pipeline import run_pipeline
+
+    root = tmp_path_factory.mktemp("stage8")
+    settings = Settings(repo_root=REPO_ROOT, config_dir=quick_config_dir(root / "configs"),
+                        data_dir=root / "data", artifacts_dir=root / "artifacts",
+                        duckdb_memory_limit="512MB", duckdb_threads=2)
+    write_freddie_panel_raw(settings)
+    assert run_pipeline(steps=["ingest"], sources=["freddie_mac"], settings=settings) == 0
+    return settings, load_config(settings.config_dir)

@@ -16,6 +16,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 - Stage 5, calibration và model package: [docs/stage5_calibration.md](docs/stage5_calibration.md)
 - Stage 6, validation engine (thẩm định độc lập): [docs/stage6_validation.md](docs/stage6_validation.md)
 - Stage 7, validation report tự động có kết luận: [docs/stage7_validation_report.md](docs/stage7_validation_report.md)
+- Stage 8, portfolio monitoring (Freddie Mac): [docs/stage8_monitoring.md](docs/stage8_monitoring.md)
 - Định nghĩa nghiệp vụ (single source of truth): [configs/definitions.yaml](configs/definitions.yaml)
 
 ## Trạng thái
@@ -29,7 +30,7 @@ Model Development  ->  Independent Model Validation  ->  Portfolio Monitoring  -
 | 5 | Calibration, đóng băng model | **Xong**: Platt cho cả hai mô hình (chọn bằng CV), slope validation 1.00 / 1.01; model package fingerprint `c95dc90913d8` (đổi cách băm ở chặng 6.0, trước là `35e42a5f208b`). [Tổng kết](docs/stage5_calibration.md) |
 | 6 | Validation engine | **Xong** (tag `v0.6-validation`): một lệnh tính lại mọi chỉ số từ gói đóng băng, 252 kiểm tra, 0 lệch, 17 phát hiện; test Gini 0.505 / 0.563; `metrics.json` + báo cáo. [Tổng kết](docs/stage6_validation.md) |
 | 7 | Validation report tự động | **Xong**: 11 quy tắc trong `validation.yaml` cho kết luận từng mô hình (champion Phải khắc phục: AIR 0.56 cho người dưới 30; challenger Đạt có lưu ý) và khuyến nghị (triển khai challenger kèm điều kiện); so sánh hai mô hình; báo cáo mở đầu bằng kết luận, việc cần làm, giới hạn. [Tổng kết](docs/stage7_validation_report.md) |
-| 8 | Portfolio monitoring | |
+| 8 | Portfolio monitoring | **Xong**: panel 35.6 triệu dòng dựng bằng DuckDB; chỉ số danh mục theo số khoản và dư nợ, vintage curve, roll rate / migration, phân khúc và tập trung; 38 kiểm tra, 0 lệch. 2026-03: chỉ số tháng xanh, nhưng trạng thái đỏ vì lứa 2023-2024 có default ở cùng MOB cao gấp khoảng 3 lần lứa 2012-2016. [Tổng kết](docs/stage8_monitoring.md) |
 | 9 | Survival và EWS | |
 | 10 | Dashboard, demo | |
 
@@ -66,7 +67,7 @@ python -m credit_risk run --source freddie_mac             # chỉ một nguồn
 | 4 | `train` | Scorecard: logistic trên WoE, loại biến sai / không ổn định dấu, quy đổi điểm, mã lý do, model card; LightGBM challenger: 30 cấu hình, early stopping, SHAP, so với champion (M1) | `data/processed/home_credit/{scorecard.json,scores.parquet,challenger.json,challenger_model.txt,challenger_scores.parquet}`, `artifacts/<run_id>/train/` |
 | 5 | `calibrate` | Platt / isotonic trên calibration sample, chọn bằng CV; đóng băng model package | `data/processed/home_credit/model_package/`, `artifacts/<run_id>/calibrate/` |
 | 6 | `validate-model` | Thẩm định độc lập gói đóng băng: tính lại AUC/Gini/KS, hiệu chỉnh, PSI, bootstrap, phân khúc, so sánh hai mô hình, chấm lại; áp quy tắc kết luận | `artifacts/<run_id>/validate-model/{metrics.json,validation_report.md}` |
-| 7 | `monitor` | Vintage, roll rate, migration | *stub, chặng 8* |
+| 7 | `monitor` | Panel giám sát, chỉ số danh mục hằng tháng, vintage curve, roll rate / migration, phân khúc, cảnh báo theo `ews.yaml` | `data/processed/freddie_mac/monitoring_panel.parquet`, `artifacts/<run_id>/monitor/{monitoring_metrics.json,monitoring_report.md,*.csv}` |
 | 8 | `ews` | Cohort, nhãn 3 tháng, model, watchlist | *stub, chặng 9* |
 | 9 | `report` | Dữ liệu dashboard | *stub, chặng 10* |
 
@@ -91,7 +92,7 @@ bank-credit-risk-platform/
 │   ├── models/                   # scorecard.py (champion), challenger.py (LightGBM, SHAP), calibration.py
 │   ├── validation/               # metrics.py, package, population, discrimination, calibration_check, stability,
 │   │                             # uncertainty, segments, comparison, implementation, conclusion, engine.py
-│   ├── monitoring/               # buckets.py, transitions.py (roll rate)
+│   ├── monitoring/               # buckets, transitions, panel, portfolio, vintage, roll, concentration, alerts, engine.py
 │   ├── ews/                      # labels.py: nhãn 90+ DPD trong 3 tháng
 │   ├── reporting/                # model_card.py, challenger_report.py, calibration_report.py
 │   ├── pipeline.py               # 9 bước, run_id, manifest
