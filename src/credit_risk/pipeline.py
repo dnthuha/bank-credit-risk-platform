@@ -818,6 +818,23 @@ def _ews(ctx: RunContext, sources: Sequence[str]) -> None:
     log.info("  ews: %s", detail)
     ctx.record("ews", "ok", detail, [*(f"ews/{path.relative_to(ctx.run_dir / 'ews').as_posix()}" for path in paths)])
 
+def _report(ctx: RunContext, sources: Sequence[str]) -> None:
+    """Stage 10: gather the latest outputs of every step into one dashboard bundle, mirrored to reports/latest."""
+    from credit_risk.reporting.bundle import BundleError, build_bundle, mirror_latest
+
+    done = tuple(s["step"] for s in ctx.steps if s["status"] == "ok")
+    try:
+        bundle = build_bundle(ctx.settings, ctx.config, ctx.run_id, ctx.run_dir / "report", current_steps=done)
+    except BundleError as exc:
+        raise StepFailed(f"report: {exc}") from exc
+    latest = mirror_latest(bundle, ctx.settings.reports_root)
+    used = ", ".join(f"{step} {rid}" for step, rid in bundle.runs.items() if rid)
+    missing = "; ".join(f"{m}: {len(v)} file(s) missing" for m, v in bundle.missing.items())
+    detail = f"{len(bundle.copied)} files from {used}; mirrored to {latest.as_posix()}" + (f"; {missing}" if missing else "")
+    log.info("  report: %s", detail)
+    ctx.record("report", "ok", detail, [f"report/{p.relative_to(ctx.run_dir / 'report').as_posix()}" for p in bundle.copied])
+
+
 def _stub(step: str, stage: str) -> Callable[[RunContext, Sequence[str]], None]:
     def run(ctx: RunContext, sources: Sequence[str]) -> None:
         log.info("[stub] %s - not implemented yet (roadmap stage %s)", step, stage)
@@ -835,7 +852,7 @@ STEPS: dict[str, Callable[[RunContext, Sequence[str]], None]] = {
     "validate-model": _validate_model,
     "monitor": _monitor,
     "ews": _ews,
-    "report": _stub("report", "7 and 10"),
+    "report": _report,
 }
 
 

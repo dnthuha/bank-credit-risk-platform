@@ -28,7 +28,10 @@ def test_full_pipeline_runs_end_to_end(raw_data):
     assert statuses["ingest"] == statuses["validate-data"] == statuses["features"] == "ok"
     assert statuses["train"] == statuses["calibrate"] == "ok"
     assert statuses["validate-model"] == statuses["monitor"] == "ok"
-    assert statuses["report"] == "stub"
+    assert statuses["report"] == "ok"
+    assert (run_dir / "report" / "index.json").exists()
+    assert (settings.reports_root / "latest" / "index.json").exists()
+    assert (run_dir / "report" / "development" / "applicant_examples.json").exists()
     assert manifest["run_id"].endswith(manifest["config_hash"][:8])
     assert manifest["packages"]["duckdb"] is not None
 

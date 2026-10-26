@@ -26,7 +26,7 @@ dev = ["pytest>=8.0"]
 # Cài khi tới chặng tương ứng, rồi ghim lại vào requirements.txt.
 modeling = ["matplotlib>=3.8"]  # chặng 5; SHAP lấy từ LightGBM (pred_contrib), không cần gói shap
 ews = ["lifelines>=0.29"]                                       # chặng 9
-app = ["streamlit>=1.40"]                                       # chặng 10
+app = ["streamlit>=1.40"]                                       # chặng 10 (đã ghim trong requirements.txt)
 
 [project.scripts]
 credit-risk = "credit_risk.cli:main"

@@ -19,6 +19,7 @@ class Settings:
     artifacts_dir: Path
     duckdb_memory_limit: str
     duckdb_threads: int
+    reports_dir: Path | None = None   # Stage 10: where the `report` step mirrors the latest dashboard bundle
 
     @property
     def raw_dir(self) -> Path:
@@ -27,6 +28,11 @@ class Settings:
     @property
     def processed_dir(self) -> Path:
         return self.data_dir / "processed"
+
+    @property
+    def reports_root(self) -> Path:
+        """reports/ next to artifacts/ unless configured: tests with a temporary artifacts_dir never touch the repo."""
+        return self.reports_dir if self.reports_dir is not None else self.artifacts_dir.parent / "reports"
 
 
 def _resolve(value: str, base: Path) -> Path:
@@ -45,4 +51,5 @@ def load_settings(repo_root: Path = REPO_ROOT) -> Settings:
         artifacts_dir=_resolve(env("CREDIT_RISK_ARTIFACTS_DIR", "artifacts"), repo_root),
         duckdb_memory_limit=env("CREDIT_RISK_DUCKDB_MEMORY_LIMIT", "3GB"),
         duckdb_threads=int(env("CREDIT_RISK_DUCKDB_THREADS", "4")),
+        reports_dir=_resolve(env("CREDIT_RISK_REPORTS_DIR", "reports"), repo_root),
     )
